@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     llm_model: str = "openai/gpt-4o"
     llm_base_url: str = "https://openrouter.ai/api/v1"
     scan_interval_s: int = 1  # Interval in seconds for the main loop's idle time
+    session_timeout_s: int = 15  # default timeout (seconds) for idle sessions/documents
 
     class Config:
         env_file = ".env"
