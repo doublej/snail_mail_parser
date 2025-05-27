@@ -12,3 +12,5 @@ pydantic-settings # >=2.2
 ruamel.yaml # >=0.18
 markdown-it-py # >=3.0
 python-dotenv  # >=1.0
+fastapi # >=0.100
+uvicorn[standard] # >=0.20
