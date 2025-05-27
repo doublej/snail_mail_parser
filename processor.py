@@ -94,6 +94,11 @@ class Processor:
                 open_doc_entry = self.open_documents[existing_doc_id]
                 existing_letter_data = open_doc_entry['letter_data']
                 
+                # Append current page path to the list of paths for this open document
+                if 'page_paths' not in open_doc_entry: # Should have been initialized, but good practice
+                    open_doc_entry['page_paths'] = []
+                open_doc_entry['page_paths'].append(current_page_path)
+
                 # Append content (ensure newline separation)
                 existing_letter_data.content += f"\n\n--- Page Break (Original Page ID: {llm_response.id}) ---\n\n{llm_response.content}"
                 # Merge QR payloads (avoid duplicates)
@@ -115,7 +120,8 @@ class Processor:
                 
                 if existing_letter_data.is_information_complete:
                     print(f"Processor: Document {existing_doc_id} now considered complete. Saving.")
-                    save_output(existing_letter_data, self.settings)
+                    # Pass the accumulated page paths for this multi-page document
+                    save_output(existing_letter_data, open_doc_entry['page_paths'], self.settings)
                     del self.open_documents[existing_doc_id]
                     print(f"Successfully processed and closed multi-page document: {existing_doc_id}")
                 else:
@@ -127,14 +133,16 @@ class Processor:
                 actual_doc_id = llm_response.id 
                 print(f"Processor: Page {actual_doc_id} is part of a new multi-page document. Keeping it open.")
                 self.open_documents[actual_doc_id] = {
-                    'letter_data': llm_response, # llm_response already has the content of the first page
-                    'last_seen_timestamp': time.time()
+                    'letter_data': llm_response, 
+                    'last_seen_timestamp': time.time(),
+                    'page_paths': [current_page_path] # Initialize page_paths for the new open document
                 }
             else:
                 # This is a single, complete document.
                 actual_doc_id = llm_response.id
                 print(f"Processor: Page {actual_doc_id} is a complete single-page document. Saving.")
-                save_output(llm_response, self.settings)
+                # Pass the current page path as a list for this single-page document
+                save_output(llm_response, [current_page_path], self.settings)
                 print(f"Successfully processed single-page document: {actual_doc_id}")
 
         except Exception:
@@ -157,10 +165,13 @@ class Processor:
         
         for doc_id in timed_out_ids:
             print(f"Processor: Document {doc_id} timed out. Saving and closing.")
-            data_to_save = self.open_documents[doc_id]['letter_data']
-            # Mark as complete because it timed out, or LLM should have indicated if it's truly incomplete.
-            data_to_save.is_information_complete = True # Override, as we are force-closing.
-            save_output(data_to_save, self.settings)
+            open_doc_entry = self.open_documents[doc_id]
+            data_to_save = open_doc_entry['letter_data']
+            page_paths_to_save = open_doc_entry.get('page_paths', []) # Get page_paths, default to empty list if missing
+
+            # Mark as complete because it timed out.
+            data_to_save.is_information_complete = True 
+            save_output(data_to_save, page_paths_to_save, self.settings)
             del self.open_documents[doc_id]
             print(f"Successfully processed and closed timed-out document: {doc_id}")
 
@@ -171,11 +182,14 @@ class Processor:
             print("Processor: No open documents to flush.")
             return
             
-        for doc_id in list(self.open_documents.keys()): # list() for safe iteration while modifying
+        for doc_id in list(self.open_documents.keys()): 
             print(f"Processor: Flushing document {doc_id}.")
-            data_to_save = self.open_documents[doc_id]['letter_data']
-            data_to_save.is_information_complete = True # Mark as complete on flush
-            save_output(data_to_save, self.settings)
+            open_doc_entry = self.open_documents[doc_id]
+            data_to_save = open_doc_entry['letter_data']
+            page_paths_to_save = open_doc_entry.get('page_paths', []) # Get page_paths
+
+            data_to_save.is_information_complete = True 
+            save_output(data_to_save, page_paths_to_save, self.settings)
             del self.open_documents[doc_id]
             print(f"Successfully flushed document: {doc_id}")
         print("Processor: All open documents flushed.")
