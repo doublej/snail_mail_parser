@@ -3,8 +3,10 @@ from typing import List, Optional
 from pydantic import BaseModel, ValidationError
 import json 
 from enum import Enum
-import os # Added for listing directories
-from pathlib import Path # To ensure settings.output_dir is a Path object
+import os 
+from pathlib import Path 
+from datetime import datetime, timezone # Added for logging timestamp
+import re # Added for sanitizing folder name for logs
 
 # Define an Enum for document types
 class DocumentType(str, Enum):
@@ -33,9 +35,56 @@ class LetterLLMResponse(BaseModel):
     qr_payloads: List[str]
     payment: Optional[Payment] = None # Allow payment to be None if not applicable
     # New fields for multi-page document handling
-    is_multipage_explicit: Optional[bool] = False # Does the page explicitly state it's part of a multi-page doc (e.g., "page 1 of 2")?
-    is_information_complete: Optional[bool] = True # Does the page seem to contain a complete piece of information, or does it seem to be cut off?
-    belongs_to_open_doc_id: Optional[str] = None # If this page belongs to an existing open document, what is its ID?
+    is_multipage_explicit: Optional[bool] = False 
+    is_information_complete: Optional[bool] = True 
+    belongs_to_open_doc_id: Optional[str] = None 
+
+# Helper function to sanitize folder names, similar to the one in output.py
+# but can be kept local to llm.py or moved to a common utils.py
+def _sanitize_foldername_llm(name: str) -> str:
+    """Sanitizes a string to be a valid folder name for LLM log paths."""
+    if not name or name.strip() == "":
+        name = "UnknownSender_LLMLog" # Default for logging if sender unknown early
+    name = re.sub(r'[^\w\s-]', '', name).strip()
+    name = re.sub(r'\s+', '_', name)
+    return name[:50] if len(name) > 50 else name
+
+def _log_llm_interaction(
+    doc_id: str, 
+    settings, 
+    request_data: dict, 
+    response_data: Optional[dict] = None, 
+    error_details: Optional[dict] = None,
+    final_sender_name_for_path: str = "UnknownSender_LLMLog" # Pass the determined sender name
+):
+    """Helper function to log LLM request, response, and errors to a JSON file."""
+    try:
+        # Use the provided sender name for the path, sanitized
+        sane_sender_folder = _sanitize_foldername_llm(final_sender_name_for_path)
+
+        log_parent_dir = Path(settings.output_dir) / sane_sender_folder / doc_id / "llm_interaction_logs"
+        log_parent_dir.mkdir(parents=True, exist_ok=True)
+        
+        timestamp_str = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+        # doc_id is part of the folder structure, so timestamp makes the filename unique
+        log_file_name = f"llm_interaction_{timestamp_str}.json"
+        log_file_path = log_parent_dir / log_file_name
+        
+        log_content = {
+            "doc_id": doc_id, # Still useful to have in the log content itself
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "request": request_data,
+        }
+        if response_data:
+            log_content["response"] = response_data
+        if error_details:
+            log_content["error_details"] = error_details
+            
+        with open(log_file_path, 'w', encoding='utf-8') as f:
+            json.dump(log_content, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        # Print to console if logging itself fails, but don't crash the main process
+        print(f"CRITICAL: Failed to write LLM interaction log for {doc_id}. Error: {e}")
 
 def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, open_docs_summary: Optional[List[dict]] = None) -> LetterLLMResponse:
     """
@@ -98,6 +147,19 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, 
 
     user_prompt = "\n".join(user_prompt_parts)
 
+    # Logging related initializations
+    request_log_data = {
+        "model": settings.llm_model,
+        "system_prompt": system_prompt,
+        "user_prompt": user_prompt
+    }
+    response_log_data = {}
+    error_log_details = {}
+    # This will hold the Pydantic model instance to be returned
+    returned_response_object: Optional[LetterLLMResponse] = None 
+    # This will hold the sender name determined from the response, for logging path
+    final_sender_name_for_log_path: str = "UnknownSender_LLMLog" 
+
     raw_content_for_error = "" # Store raw text for error reporting if needed
 
     try:
@@ -128,12 +190,17 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, 
         # Ensure qr_payloads are correctly set if LLM missed them or returned non-list
         if not isinstance(result.qr_payloads, list):
             result.qr_payloads = qr_payloads
+        
+        response_log_data["parsed_result"] = result.model_dump()
+        final_sender_name_for_log_path = result.sender # Get sender for log path
+        returned_response_object = result
 
-        return result
-
-    except Exception as e: # Catch OpenAI API errors, validation errors from .parse(), or our ValueError
+    except Exception as e: 
         print(f"Error during LLM processing or Pydantic parsing for doc_id {doc_id}: {e}")
-        # If raw_content_for_error is not set, it means error happened before/during API call,
+        error_log_details["exception_type"] = type(e).__name__
+        error_log_details["exception_message"] = str(e)
+        if raw_content_for_error: # Populated if refusal path was taken before another error
+            error_log_details["contextual_raw_content"] = raw_content_for_error
         # so actual LLM output might not be available.
         # If 'e' is a Pydantic ValidationError, it might have more details.
         # If 'e' is an OpenAI API error, it will have its own structure.
@@ -170,5 +237,41 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, 
             "belongs_to_open_doc_id": None
         }
         # Validate the error data itself to ensure it conforms to LetterLLMResponse
-        # This should always pass if error_data is structured correctly.
-        return LetterLLMResponse.model_validate(error_data)
+        fallback_response = LetterLLMResponse.model_validate(error_data)
+        error_log_details["fallback_response_generated"] = fallback_response.model_dump()
+        # Use sender from fallback for log path, which might be "Unknown"
+        final_sender_name_for_log_path = fallback_response.sender 
+        returned_response_object = fallback_response
+    finally:
+        _log_llm_interaction(
+            doc_id,
+            settings,
+            request_log_data,
+            response_log_data if response_log_data else None, # Pass None if empty
+            error_log_details if error_log_details else None, # Pass None if empty
+            final_sender_name_for_log_path
+        )
+    
+    if returned_response_object is None:
+        # This case should ideally not be reached if logic is correct,
+        # but as a safeguard, create a very generic error and log it.
+        print(f"CRITICAL: returned_response_object is None for {doc_id} after try-except-finally. Defaulting to error.")
+        critical_error_data = {
+            "id": doc_id, "sender": "System", "date_sent": "Unknown", 
+            "subject": "Critical internal error in LLM processing", 
+            "type": DocumentType.ERROR, "content": "Failed to produce a response object.",
+            "qr_payloads": qr_payloads, "payment": None,
+            "is_multipage_explicit": False, "is_information_complete": True,
+            "belongs_to_open_doc_id": None
+        }
+        returned_response_object = LetterLLMResponse.model_validate(critical_error_data)
+        # Log this critical failure specifically if the main logging in finally didn't capture it well
+        # (though it should have run with some error details)
+        _log_llm_interaction(
+            doc_id, settings, request_log_data, 
+            response_data={"critical_error_event": "returned_response_object was None"},
+            error_details={"message": "Forced critical error response generation"},
+            final_sender_name_for_path="System_CriticalError"
+        )
+
+    return returned_response_object
