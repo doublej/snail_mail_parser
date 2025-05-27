@@ -1,0 +1,12 @@
+watchdog # >=3.0
+pillow # >=10.3
+pytesseract # >=0.3
+pdf2image # >=1.16
+poppler-utils
+pyzbar # >=0.1
+openai # >=1.22
+pydantic # >=2.7
+pydantic-settings # >=2.2
+ruamel.yaml # >=0.18
+markdown-it-py # >=3.0
+python-dotenv  # >=1.0
