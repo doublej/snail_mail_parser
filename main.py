@@ -10,9 +10,8 @@ from processor import Processor
 
 def main():
     # Configure logging to see watchdog's internal messages
-    logging.basicConfig(level=logging.INFO,
+    logging.basicConfig(level=logging.DEBUG,  # Changed to DEBUG
                         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    # You can set level=logging.DEBUG for more verbose output from watchdog
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--flush', action='store_true', help='Flush all open sessions immediately')

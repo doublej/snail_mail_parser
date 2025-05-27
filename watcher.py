@@ -3,7 +3,7 @@ import re
 import threading
 from pathlib import Path
 from queue import Queue
-from watchdog.observers import Observer
+from watchdog.observers.polling import PollingObserver as Observer # Changed to PollingObserver
 from watchdog.events import FileSystemEventHandler
 
 class FolderWatcher(FileSystemEventHandler):
