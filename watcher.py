@@ -1,12 +1,13 @@
 import time
 import re
-import threading
+# import threading # Removed
 from pathlib import Path
 from queue import Queue
-from watchdog.observers.polling import PollingObserver as Observer # Changed to PollingObserver
-from watchdog.events import FileSystemEventHandler
+# from watchdog.observers.polling import PollingObserver as Observer # Removed
+# from watchdog.events import FileSystemEventHandler # Removed
+import os # For manual scanning
 
-class FolderWatcher(FileSystemEventHandler):
+class FolderWatcher: # No longer inherits from FileSystemEventHandler
     allowed_exts = {'.png', '.jpg', '.jpeg', '.tif', '.tiff', '.pdf'}
 
     def __init__(self, scan_dir: Path, queue: Queue, timeout: int):
@@ -14,46 +15,48 @@ class FolderWatcher(FileSystemEventHandler):
         self.queue = queue
         self.timeout = timeout
         self.sessions = {}  # prefix -> {'pages': [(num, Path)], 'last_seen': timestamp}
-        self.observer = Observer()
         self.pattern = re.compile(r"(.+)_([0-9]+)$")
-        self._lock = threading.Lock()
-        self._running = False
+        # self._lock = threading.Lock() # Removed, operations are sequential
+        # self._running = False # Removed, no separate threads to manage state for
+        self.known_files = set()
+
+        # Initial scan to populate known_files and avoid processing existing files on start
+        # Modify this if existing files should be processed on startup
+        print(f"Watcher: Initializing. Scanning {self.scan_dir} for existing files to ignore on first pass.")
+        try:
+            if self.scan_dir.exists() and self.scan_dir.is_dir():
+                for item_name in os.listdir(self.scan_dir):
+                    self.known_files.add(self.scan_dir / item_name)
+            else:
+                print(f"Warning: Scan directory {self.scan_dir} does not exist or is not a directory.")
+                # Optionally create it: self.scan_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            print(f"Error during initial scan of {self.scan_dir}: {e}")
+        print(f"Watcher: Initialized. {len(self.known_files)} files in {self.scan_dir} will be ignored initially.")
+
 
     def start(self):
-        self.observer.schedule(self, str(self.scan_dir), recursive=False)
-        self._running = True
-        self.observer.start()
-        # Start session timeout checker thread
-        threading.Thread(target=self._session_checker, daemon=True).start()
+        # No observer to start, this method is for any initial setup if needed
+        # or can be removed if __init__ handles all setup.
+        print(f"Watcher: Manual scanning mode configured for {self.scan_dir}.")
+        pass
 
     def stop(self):
-        self._running = False
-        self.observer.stop()
-        self.observer.join()
+        # No observer to stop
+        print("Watcher: Stopped.")
+        pass
 
-    def on_created(self, event):
-        self._handle_event(event)
-
-    def on_moved(self, event):
-        self._handle_event(event)
-
-    def _handle_event(self, event):
-        print(f"Watcher: Event received: {event.event_type} for src_path='{getattr(event, 'src_path', None)}', dest_path='{getattr(event, 'dest_path', None)}'")
-        if event.is_directory:
-            print(f"Watcher: Event for directory, ignoring.")
-            return
-        # Determine file path for created or moved
-        path = Path(event.dest_path) if hasattr(event, 'dest_path') else Path(event.src_path)
-        print(f"Watcher: Handling path: {path}")
+    def _handle_new_file(self, path: Path):
+        """Processes a single newly detected file."""
+        print(f"Watcher: Handling new file: {path}")
         ext = path.suffix.lower()
-        print(f"Watcher: File extension: {ext}")
-        if ext not in self.allowed_exts:
-            print(f"Watcher: Extension '{ext}' not in allowed_exts: {self.allowed_exts}. Ignoring.")
+        # Extension check is technically done by scan_for_new_files, but good for safety
+        if ext not in self.allowed_exts: # Should not happen if called from scan_for_new_files
             return
+
         if ext == '.pdf':
             print(f"Watcher: PDF detected: {path}. Attempting to enqueue.")
-            # PDF is standalone - enqueue immediately
-            self._flush_pages([path])
+            self._flush_pages([path]) # PDF is standalone - enqueue immediately
             return
 
         # Handle image page for aggregation
@@ -65,41 +68,78 @@ class FolderWatcher(FileSystemEventHandler):
         else:
             prefix = stem
             page_num = 0
-        with self._lock:
-            if prefix not in self.sessions:
-                self.sessions[prefix] = {'pages': [], 'last_seen': time.time()}
-            session = self.sessions[prefix]
-            session['pages'].append((page_num, path))
-            session['last_seen'] = time.time()
+        
+        # Lock removed as calls are sequential
+        if prefix not in self.sessions:
+            self.sessions[prefix] = {'pages': [], 'last_seen': time.time()}
+        session = self.sessions[prefix]
+        session['pages'].append((page_num, path))
+        session['last_seen'] = time.time()
+        print(f"Watcher: Added {path} to session {prefix}. Pages: {len(session['pages'])}")
 
-    def _session_checker(self):
-        # Periodically flush sessions that have timed out
-        while self._running:
-            now = time.time()
-            to_flush = []
-            with self._lock:
-                for prefix, sess in list(self.sessions.items()):
-                    if now - sess['last_seen'] >= self.timeout:
-                        to_flush.append(prefix)
-                for prefix in to_flush:
-                    sess = self.sessions.pop(prefix, None)
-                    if sess:
-                        # Sort pages by the trailing number and enqueue
-                        pages = [p for _, p in sorted(sess['pages'], key=lambda x: x[0])]
-                        self._flush_pages(pages)
-            time.sleep(1)
+    def scan_for_new_files(self):
+        """Scans the directory for new files and processes them."""
+        # print(f"Watcher: Scanning {self.scan_dir} for new files...") # Can be noisy
+        try:
+            if not self.scan_dir.exists() or not self.scan_dir.is_dir():
+                # print(f"Watcher: Scan directory {self.scan_dir} not found or not a directory. Skipping scan.")
+                return
+
+            current_files_on_disk = {self.scan_dir / item_name for item_name in os.listdir(self.scan_dir) if (self.scan_dir / item_name).is_file()}
+        except Exception as e:
+            print(f"Error listing files in {self.scan_dir}: {e}")
+            return
+
+        new_files = current_files_on_disk - self.known_files
+        
+        if new_files:
+            # print(f"Watcher: Found {len(new_files)} new file(s).")
+            for path in sorted(list(new_files)): # Sort for deterministic processing order
+                if path.suffix.lower() in self.allowed_exts:
+                    self._handle_new_file(path)
+                # Add all new files to known_files, whether processed or not, to avoid re-evaluating
+                self.known_files.add(path)
+        # else:
+            # print(f"Watcher: No new files found.") # Can be noisy
+
+        # Optional: Clean up known_files if files are deleted from disk
+        # self.known_files = self.known_files.intersection(current_files_on_disk)
+
+
+    def check_session_timeouts(self):
+        """
+        Checks for and flushes timed-out image sessions.
+        This replaces the _session_checker thread.
+        """
+        # print("Watcher: Checking for session timeouts...") # Can be noisy
+        now = time.time()
+        to_flush = []
+        # Lock removed as calls are sequential
+        for prefix, sess in list(self.sessions.items()): # list() for safe iteration if modifying
+            if now - sess['last_seen'] >= self.timeout:
+                print(f"Watcher: Session {prefix} timed out.")
+                to_flush.append(prefix)
+        
+        if to_flush:
+            for prefix in to_flush:
+                sess = self.sessions.pop(prefix, None)
+                if sess:
+                    pages = [p for _, p in sorted(sess['pages'], key=lambda x: x[0])]
+                    self._flush_pages(pages)
 
     def _flush_pages(self, pages):
         if pages:
             print(f"Watcher: Adding to queue: {pages}")
             self.queue.put(pages)
-        else:
-            print(f"Watcher: _flush_pages called with no pages. Nothing to queue.")
+        # else: # This log might be too verbose if called often with no pages
+            # print(f"Watcher: _flush_pages called with no pages. Nothing to queue.")
 
     def flush_all(self):
         """Manually flush all sessions (used by --flush flag)."""
-        with self._lock:
-            for prefix, sess in list(self.sessions.items()):
-                pages = [p for _, p in sorted(sess['pages'], key=lambda x: x[0])]
-                self.queue.put(pages)
-                self.sessions.pop(prefix, None)
+        print("Watcher: Flushing all pending sessions...")
+        # Lock removed as calls are sequential (assuming --flush is handled before main loop or carefully)
+        for prefix, sess in list(self.sessions.items()):
+            pages = [p for _, p in sorted(sess['pages'], key=lambda x: x[0])]
+            self.queue.put(pages)
+            self.sessions.pop(prefix, None)
+        print("Watcher: All sessions flushed.")

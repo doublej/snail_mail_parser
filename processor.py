@@ -12,13 +12,10 @@ class Processor:
         self.settings = settings
         self.queue = queue # The queue is now polled by the main loop
         self.doc_seq = 0
-        # self.lock = threading.Lock() # Lock for doc_seq might not be needed if all calls are sequential
-                                     # Keeping it for now as it's low impact.
-                                     # If main loop ensures sequential access, this can be removed.
+        # Lock for doc_seq is removed as operations are now sequential.
 
     def get_new_doc_id(self) -> str:
         """Generate a new document ID: YYYYMMDD-XXXX sequence."""
-        # with self.lock: # Assuming sequential calls from main loop
         self.doc_seq += 1
         return f"{datetime.now().strftime('%Y%m%d')}-{self.doc_seq:04d}"
 
