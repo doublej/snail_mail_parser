@@ -1,12 +1,12 @@
 from openai import OpenAI # Changed import
-from typing import List
+from typing import List, Optional # Added Optional
 from pydantic import BaseModel, ValidationError
 import json # Added for robust JSON parsing
 
 class Payment(BaseModel):
-    iban: str
-    amount: float
-    due_date: str
+    iban: Optional[str] = None
+    amount: Optional[float] = None
+    due_date: Optional[str] = None
 
 class LetterLLMResponse(BaseModel):
     id: str
@@ -80,15 +80,18 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings) 
         # Fallback or re-raise, here we create a minimal error response
         # This ensures the function always returns a LetterLLMResponse object
         # You might want to make this more robust based on requirements
+        # You might want to make this more robust based on requirements
+        error_subject = f"Validation Error: {e.errors()[0]['msg'] if e.errors() else 'Unknown validation error'}"
+        print(f"Creating fallback error response for doc_id {doc_id} due to: {error_subject}")
         error_data = {
             "id": doc_id,
             "sender": "Unknown",
             "date_sent": "Unknown",
-            "subject": f"Validation Error: {e.errors()[0]['msg'] if e.errors() else 'Unknown validation error'}",
+            "subject": error_subject,
             "type": "Error",
-            "content": f"Failed to parse LLM response. Raw content: {raw_content}",
-            "qr_payloads": qr_payloads,
-            "payment": {"iban": "Unknown", "amount": 0.0, "due_date": "Unknown"}
+            "content": f"Failed to parse LLM response. Raw content was: {raw_content}",
+            "qr_payloads": qr_payloads, # Use original QR payloads
+            "payment": {"iban": None, "amount": None, "due_date": None} # Default to None for payment fields
         }
         result = LetterLLMResponse.model_validate(error_data)
         
