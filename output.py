@@ -1,9 +1,22 @@
 from ruamel.yaml import YAML
-# from markdown_it import MarkdownIt # MarkdownIt is not used if rendering is removed
-from llm import LetterLLMResponse, DocumentType 
-from enum import Enum 
-import re # Added for sanitizing folder names
-from pathlib import Path # To ensure Path operations
+from llm import LetterLLMResponse, DocumentType
+from enum import Enum
+import re
+import shutil # Added for file copying
+from pathlib import Path
+from typing import List # Added for type hinting
+
+# Attempt to import Pillow and PyMuPDF, handle if not available for preview generation
+try:
+    from PIL import Image
+except ImportError:
+    Image = None # Placeholder if Pillow is not installed
+
+try:
+    import fitz # PyMuPDF
+except ImportError:
+    fitz = None # Placeholder if PyMuPDF is not installed
+
 
 def _sanitize_foldername(name: str) -> str:
     """Sanitizes a string to be a valid folder name."""
@@ -18,21 +31,68 @@ def _sanitize_foldername(name: str) -> str:
     return name[:50] if len(name) > 50 else name
 
 
-def save_output(letter: LetterLLMResponse, settings): 
+def save_output(letter: LetterLLMResponse, original_page_paths: List[Path], settings):
     """
-    Save the LLM response as YAML and Markdown in a sender-specific subfolder of the output directory.
+    Save the LLM response, original scans, previews, YAML, and Markdown
+    into a document-specific subfolder: output_dir/sender/doc_id/.
     """
-    base_output_dir = Path(settings.output_dir) # Ensure it's a Path object
+    base_output_dir = Path(settings.output_dir)
     
-    # Sanitize sender name for folder creation
-    # Use a default if sender is None or empty, though Pydantic model should prevent None for letter.sender
     sender_name_for_folder = _sanitize_foldername(letter.sender if letter.sender else "UnknownSender")
     
-    # Create sender-specific output directory
-    sender_out_dir = base_output_dir / sender_name_for_folder
-    sender_out_dir.mkdir(parents=True, exist_ok=True)
+    # Create the root directory for this specific document
+    doc_root_dir = base_output_dir / sender_name_for_folder / letter.id
+    doc_root_dir.mkdir(parents=True, exist_ok=True)
 
-    # Handle payment information safely for YAML data
+    # 1. Save Original Scans
+    originals_dir = doc_root_dir / "original_scans"
+    originals_dir.mkdir(exist_ok=True)
+    if original_page_paths:
+        for page_path in original_page_paths:
+            try:
+                if page_path.exists():
+                    shutil.copy(page_path, originals_dir / page_path.name)
+                else:
+                    print(f"Warning: Original scan file not found: {page_path}")
+            except Exception as e:
+                print(f"Error copying original scan {page_path.name}: {e}")
+
+    # 2. Generate and Save Previews
+    previews_dir = doc_root_dir / "previews"
+    previews_dir.mkdir(exist_ok=True)
+    preview_max_dim = 1024 # Max width/height for previews
+
+    if original_page_paths and (Image or fitz):
+        for idx, page_path in enumerate(original_page_paths):
+            preview_filename = f"preview_{page_path.stem}_{idx}.jpg"
+            preview_save_path = previews_dir / preview_filename
+            try:
+                if not page_path.exists():
+                    continue
+
+                img_to_save = None
+                if page_path.suffix.lower() in ['.pdf'] and fitz:
+                    doc = fitz.open(page_path)
+                    if len(doc) > 0:
+                        page = doc.load_page(0) # Preview first page of PDF
+                        pix = page.get_pixmap()
+                        img_to_save = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                    doc.close()
+                elif page_path.suffix.lower() in ['.png', '.jpg', '.jpeg', '.tif', '.tiff'] and Image:
+                    img_to_save = Image.open(page_path)
+                
+                if img_to_save:
+                    img_to_save.thumbnail((preview_max_dim, preview_max_dim))
+                    if img_to_save.mode == 'RGBA' or img_to_save.mode == 'P': # Convert to RGB for JPEG
+                        img_to_save = img_to_save.convert('RGB')
+                    img_to_save.save(preview_save_path, "JPEG", quality=85)
+            except Exception as e:
+                print(f"Error generating preview for {page_path.name}: {e}")
+    elif not (Image or fitz):
+        print("Warning: Pillow and/or PyMuPDF not installed. Skipping preview generation.")
+
+
+    # 3. Prepare data for YAML and Markdown (existing logic)
     payment_data_yaml = {}
     if letter.payment is not None:
         payment_data_yaml = {
@@ -66,7 +126,7 @@ def save_output(letter: LetterLLMResponse, settings):
     }
 
     # Write YAML file
-    yaml_path = sender_out_dir / f"{letter.id}.yaml" # Use sender_out_dir
+    yaml_path = doc_root_dir / f"{letter.id}.yaml" # Save in doc_root_dir
     yaml = YAML()
     with open(yaml_path, 'w', encoding='utf-8') as yf: 
         yaml.dump(data, yf)
@@ -109,10 +169,8 @@ def save_output(letter: LetterLLMResponse, settings):
     md_text = "\n".join(md_lines)
     
     # The markdown-it rendering was for validation and can be removed as per instructions.
-    # md = MarkdownIt() # Ensure MarkdownIt is not imported if not used
-    # _ = md.render(md_text) 
 
     # Write Markdown file
-    md_path = sender_out_dir / f"{letter.id}.md" # Use sender_out_dir
+    md_path = doc_root_dir / f"{letter.id}.md" # Save in doc_root_dir
     with open(md_path, 'w', encoding='utf-8') as mf: 
         mf.write(md_text)
