@@ -30,6 +30,8 @@ def main():
     if args.flush:
         watcher.flush_all()
 
+    print(f"Application started successfully. Watching {settings.scan_dir} for new files.")
+
     try:
         while True:
             time.sleep(1)
