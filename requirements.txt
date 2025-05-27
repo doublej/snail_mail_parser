@@ -9,7 +9,7 @@ opencv-python-headless # For QR code detection and image manipulation
 openai # >=1.22
 pydantic # >=2.7
 pydantic-settings # >=2.2
-ruamel.yaml # >=0.18
+ruamel.yaml>=0.18
 markdown-it-py # >=3.0
 python-dotenv  # >=1.0
 fastapi # >=0.100
