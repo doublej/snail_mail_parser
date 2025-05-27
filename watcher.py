@@ -38,14 +38,20 @@ class FolderWatcher(FileSystemEventHandler):
         self._handle_event(event)
 
     def _handle_event(self, event):
+        print(f"Watcher: Event received: {event.event_type} for src_path='{getattr(event, 'src_path', None)}', dest_path='{getattr(event, 'dest_path', None)}'")
         if event.is_directory:
+            print(f"Watcher: Event for directory, ignoring.")
             return
         # Determine file path for created or moved
         path = Path(event.dest_path) if hasattr(event, 'dest_path') else Path(event.src_path)
+        print(f"Watcher: Handling path: {path}")
         ext = path.suffix.lower()
+        print(f"Watcher: File extension: {ext}")
         if ext not in self.allowed_exts:
+            print(f"Watcher: Extension '{ext}' not in allowed_exts: {self.allowed_exts}. Ignoring.")
             return
         if ext == '.pdf':
+            print(f"Watcher: PDF detected: {path}. Attempting to enqueue.")
             # PDF is standalone - enqueue immediately
             self._flush_pages([path])
             return
@@ -85,7 +91,10 @@ class FolderWatcher(FileSystemEventHandler):
 
     def _flush_pages(self, pages):
         if pages:
+            print(f"Watcher: Adding to queue: {pages}")
             self.queue.put(pages)
+        else:
+            print(f"Watcher: _flush_pages called with no pages. Nothing to queue.")
 
     def flush_all(self):
         """Manually flush all sessions (used by --flush flag)."""
