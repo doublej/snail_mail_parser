@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings
 from pathlib import Path
 
 class Settings(BaseSettings):
@@ -10,4 +10,6 @@ class Settings(BaseSettings):
     llm_model: str = "openai/gpt-4o"
     llm_base_url: str = "https://openrouter.ai/api/v1"
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding='utf-8')
+    class Config:
+        env_file = ".env"
+        env_file_encoding = 'utf-8'
