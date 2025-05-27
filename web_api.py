@@ -1,9 +1,10 @@
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request # Added Request
 from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.templating import Jinja2Templates # Added for templating
 from pathlib import Path
 from typing import List, Dict, Any
-import os # Added for path validation in file serving
+import os 
 
 from settings import Settings
 import navigator
@@ -16,8 +17,10 @@ OUTPUT_DIR = Path(settings.output_dir)
 # Ensure output directory exists (though navigator functions handle non-existence gracefully)
 if not OUTPUT_DIR.exists():
     print(f"Warning: Output directory {OUTPUT_DIR} does not exist. API might return empty results.")
-    # Depending on requirements, you might want to create it:
-    # OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# Setup Jinja2 templating
+# Assumes a 'templates' directory in the same location as web_api.py
+templates = Jinja2Templates(directory="templates")
 
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
@@ -120,6 +123,25 @@ async def get_document_file(sender_name: str, doc_id: str, subfolder: str, filen
         raise HTTPException(status_code=404, detail=f"File '{filename}' not found or access denied in '{subfolder}' for document '{doc_id}'.")
     
     return FileResponse(file_path)
+
+@app.get("/senders/{sender_name}/letters/{doc_id}/facsimile/view", response_class=HTMLResponse, tags=["Document Views"])
+async def view_document_facsimile(request: Request, sender_name: str, doc_id: str):
+    """Serves an HTML page displaying the facsimile text in a retro style."""
+    facsimile_file_path = navigator.get_letter_facsimile_path(OUTPUT_DIR, sender_name, doc_id)
+    
+    if not facsimile_file_path:
+        raise HTTPException(status_code=404, detail=f"Facsimile file for document '{doc_id}' from sender '{sender_name}' not found.")
+
+    try:
+        with open(facsimile_file_path, 'r', encoding='utf-8') as f:
+            facsimile_content = f.read()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reading facsimile file: {e}")
+
+    return templates.TemplateResponse(
+        "facsimile_viewer.html", 
+        {"request": request, "doc_id": doc_id, "facsimile_content": facsimile_content}
+    )
 
 
 if __name__ == "__main__":

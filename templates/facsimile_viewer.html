@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Facsimile Viewer - {{ doc_id }}</title>
+    <style>
+        body {
+            font-family: 'Courier New', Courier, monospace;
+            background-color: #e0e0e0; /* Light gray background for the page */
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start; /* Align to top if content is long */
+            min-height: 100vh;
+        }
+
+        .matrix-paper {
+            display: flex;
+            align-items: flex-start;
+            background: #f8f8f8; /* Paper background */
+            border: 2px solid #bbb;
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+            width: 800px; /* Adjusted width for better facsimile display */
+            margin: 40px auto;
+            padding: 0;
+            position: relative;
+        }
+
+        .paper-content {
+            flex: 1;
+            padding: 32px 10px; /* Adjusted padding */
+            position: relative;
+            background:
+                repeating-linear-gradient(
+                to bottom,
+                /* #e0f7fa 0px, */ /* Light blue bars */
+                /* #e0f7fa 24px, */
+                #f8f8f8 0px, /* No bars, plain paper */
+                #f8f8f8 24px, /* If you want bars, uncomment above and adjust this line */
+                #f8f8f8 24px,
+                #f8f8f8 48px 
+                );
+            /* Optional: green/blue bar stripes, adjust colors as needed */
+            /* border-left: 1px dashed #ccc; */ /* Removing side perforation lines from content area */
+            /* border-right: 1px dashed #ccc; */
+            min-height: 600px; /* Ensure paper has some height */
+        }
+        
+        .paper-content pre {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 14px; /* Adjusted for facsimile density */
+            color: #222;
+            margin: 0; /* Remove default pre margins */
+            white-space: pre-wrap; /* Wrap long lines but preserve formatting */
+            word-wrap: break-word; /* Break words if necessary */
+            line-height: 1.3; /* Adjust line height for readability */
+        }
+
+        .sprocket {
+            width: 32px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            padding-top: 16px; /* Initial offset for holes */
+            background: #f0f0f0; /* Slightly different background for sprocket area */
+        }
+
+        .sprocket.left {
+            border-right: 1px dashed #bbb;
+        }
+
+        .sprocket.right {
+            border-left: 1px dashed #bbb;
+        }
+
+        /* Generate holes */
+        .sprocket::before { /* Simplified to one pseudo-element for repeating holes */
+            content: '';
+            display: block;
+            width: 14px;
+            height: 14px;
+            background: #fff; /* Hole color */
+            border: 2px solid #bbb; /* Hole border */
+            border-radius: 50%;
+            margin-bottom: 28px; /* Spacing between holes */
+            box-shadow: /* Vertical repetition of holes */
+                0 42px 0 0px #fff, 0 42px 0 2px #bbb, /* Hole 2 + border */
+                0 84px 0 0px #fff, 0 84px 0 2px #bbb, /* Hole 3 + border */
+                0 126px 0 0px #fff, 0 126px 0 2px #bbb,
+                0 168px 0 0px #fff, 0 168px 0 2px #bbb,
+                0 210px 0 0px #fff, 0 210px 0 2px #bbb,
+                0 252px 0 0px #fff, 0 252px 0 2px #bbb,
+                0 294px 0 0px #fff, 0 294px 0 2px #bbb,
+                0 336px 0 0px #fff, 0 336px 0 2px #bbb,
+                0 378px 0 0px #fff, 0 378px 0 2px #bbb,
+                0 420px 0 0px #fff, 0 420px 0 2px #bbb,
+                0 462px 0 0px #fff, 0 462px 0 2px #bbb,
+                0 504px 0 0px #fff, 0 504px 0 2px #bbb,
+                0 546px 0 0px #fff, 0 546px 0 2px #bbb,
+                0 588px 0 0px #fff, 0 588px 0 2px #bbb,
+                0 630px 0 0px #fff, 0 630px 0 2px #bbb,
+                0 672px 0 0px #fff, 0 672px 0 2px #bbb,
+                0 714px 0 0px #fff, 0 714px 0 2px #bbb,
+                0 756px 0 0px #fff, 0 756px 0 2px #bbb,
+                0 798px 0 0px #fff, 0 798px 0 2px #bbb,
+                0 840px 0 0px #fff, 0 840px 0 2px #bbb;
+                /* Add more for longer paper */
+        }
+        /* The .line for horizontal perforations is not used as the facsimile is one continuous block */
+    </style>
+</head>
+<body>
+    <div class="matrix-paper">
+        <div class="sprocket left"></div>
+        <div class="paper-content">
+            <pre>{{ facsimile_content }}</pre>
+        </div>
+        <div class="sprocket right"></div>
+    </div>
+</body>
+</html>
