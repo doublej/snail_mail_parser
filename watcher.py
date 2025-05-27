@@ -20,19 +20,17 @@ class FolderWatcher: # No longer inherits from FileSystemEventHandler
         # self._running = False # Removed, no separate threads to manage state for
         self.known_files = set()
 
-        # Initial scan to populate known_files and avoid processing existing files on start
-        # Modify this if existing files should be processed on startup
-        print(f"Watcher: Initializing. Scanning {self.scan_dir} for existing files to ignore on first pass.")
+        # self.known_files is initialized as an empty set.
+        # Files existing in scan_dir upon startup will be processed on the first scan.
+        print(f"Watcher: Initializing. Existing files in {self.scan_dir} will be processed.")
         try:
-            if self.scan_dir.exists() and self.scan_dir.is_dir():
-                for item_name in os.listdir(self.scan_dir):
-                    self.known_files.add(self.scan_dir / item_name)
-            else:
+            if not (self.scan_dir.exists() and self.scan_dir.is_dir()):
                 print(f"Warning: Scan directory {self.scan_dir} does not exist or is not a directory.")
                 # Optionally create it: self.scan_dir.mkdir(parents=True, exist_ok=True)
         except Exception as e:
-            print(f"Error during initial scan of {self.scan_dir}: {e}")
-        print(f"Watcher: Initialized. {len(self.known_files)} files in {self.scan_dir} will be ignored initially.")
+            # This exception would likely be from self.scan_dir.exists() or .is_dir() if path is invalid
+            print(f"Error checking scan directory {self.scan_dir}: {e}")
+        print(f"Watcher: Initialized. known_files set is empty. All files in {self.scan_dir} will be scanned.")
 
 
     def start(self):
