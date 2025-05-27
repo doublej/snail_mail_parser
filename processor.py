@@ -38,6 +38,7 @@ class Processor:
             doc_id = self.get_new_doc_id()
             letter = classify_document(text_all, qr_payloads, doc_id, self.settings)
             save_output(letter, self.settings)
+            print(f"Successfully processed document: {doc_id}")
         except Exception:
             # On error, write a .error file with full traceback
             doc_id = locals().get('doc_id', 'unknown')
