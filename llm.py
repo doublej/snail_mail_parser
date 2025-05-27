@@ -17,8 +17,12 @@ class LetterLLMResponse(BaseModel):
     content: str
     qr_payloads: List[str]
     payment: Payment
+    # New fields for multi-page document handling
+    is_multipage_explicit: Optional[bool] = False # Does the page explicitly state it's part of a multi-page doc (e.g., "page 1 of 2")?
+    is_information_complete: Optional[bool] = True # Does the page seem to contain a complete piece of information, or does it seem to be cut off?
+    belongs_to_open_doc_id: Optional[str] = None # If this page belongs to an existing open document, what is its ID?
 
-def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings) -> LetterLLMResponse:
+def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, open_docs_summary: Optional[List[dict]] = None) -> LetterLLMResponse:
     """
     Send OCR text and QR payloads to LLM and parse the JSON response into a LetterLLMResponse.
     """
@@ -29,17 +33,34 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings) 
     )
 
     # Build prompt for classification
-    prompt = (
+    prompt_parts = [
         "You are an AI assistant that classifies documents. "
-        "Given the OCR-extracted text of a document, extract relevant information into a JSON object "
-        "with the following fields: id, sender, date_sent, subject, type, content, qr_payloads (list of strings), "
-        "and payment (an object with iban, amount, due_date). "
-        "The qr_payloads should include any QR code content found in the document.\n\n"
-        f"Document ID: {doc_id}\n"
-        f"OCR Text: \"\"\"\n{text}\n\"\"\"\n"
-        f"QR Payloads: {qr_payloads}\n\n"
-        "Return a JSON object."
-    )
+        "Given the OCR-extracted text of a document, extract relevant information into a JSON object.",
+        "The JSON object must include these fields: id, sender, date_sent, subject, type, content, qr_payloads (list of strings), "
+        "payment (an object with iban, amount, due_date), is_multipage_explicit (boolean), "
+        "is_information_complete (boolean), and belongs_to_open_doc_id (string or null).",
+        
+        f"\nDocument ID for the current page: {doc_id}",
+        f"OCR Text: \"\"\"\n{text}\n\"\"\"",
+        f"QR Payloads found on this page: {qr_payloads}",
+
+        "\nMulti-page document considerations:",
+        "- 'is_multipage_explicit': Set to true if the page explicitly mentions being part of a multi-page document (e.g., 'page 1 of 2', 'continued on next page'). Otherwise, false.",
+        "- 'is_information_complete': Set to false if the text seems abruptly cut off or clearly incomplete. Otherwise, true.",
+        "- 'belongs_to_open_doc_id': If this page belongs to one of the 'Currently Open Documents' listed below, set this to the ID of that document. Otherwise, set it to null."
+    ]
+
+    if open_docs_summary:
+        prompt_parts.append("\nCurrently Open Documents (documents awaiting more pages):")
+        if not open_docs_summary: # Ensure it's not an empty list causing issues
+             prompt_parts.append("  (None)")
+        for open_doc in open_docs_summary:
+            prompt_parts.append(f"  - ID: {open_doc['id']}, Subject: {open_doc['subject']}, Snippet: {open_doc['content_snippet']}...")
+    else:
+        prompt_parts.append("\nNo documents are currently open and awaiting more pages.")
+
+    prompt_parts.append("\nReturn ONLY the JSON object.")
+    prompt = "\n".join(prompt_parts)
     
     completion = client.chat.completions.create(
         model=settings.llm_model,
@@ -91,7 +112,10 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings) 
             "type": "Error",
             "content": f"Failed to parse LLM response. Raw content was: {raw_content}",
             "qr_payloads": qr_payloads, # Use original QR payloads
-            "payment": {"iban": None, "amount": None, "due_date": None} # Default to None for payment fields
+            "payment": {"iban": None, "amount": None, "due_date": None}, # Default to None for payment fields
+            "is_multipage_explicit": False,
+            "is_information_complete": True, # Assume complete on error, or could be False
+            "belongs_to_open_doc_id": None
         }
         result = LetterLLMResponse.model_validate(error_data)
         
