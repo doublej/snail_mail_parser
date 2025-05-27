@@ -10,10 +10,10 @@ import os # For manual scanning
 class FolderWatcher: # No longer inherits from FileSystemEventHandler
     allowed_exts = {'.png', '.jpg', '.jpeg', '.tif', '.tiff', '.pdf'}
 
-    def __init__(self, scan_dir: Path, queue: Queue, timeout: int):
+    def __init__(self, scan_dir: Path, queue: Queue):
         self.scan_dir = scan_dir
         self.queue = queue
-        self.timeout = timeout
+        # self.timeout = timeout # Removed
         self.sessions = {}  # prefix -> {'pages': [(num, Path)], 'last_seen': timestamp}
         self.pattern = re.compile(r"(.+)_([0-9]+)$")
         # self._lock = threading.Lock() # Removed, operations are sequential
@@ -113,9 +113,12 @@ class FolderWatcher: # No longer inherits from FileSystemEventHandler
         now = time.time()
         to_flush = []
         # Lock removed as calls are sequential
+        # Defaulting to a fixed 15-second timeout for sessions, as it was previously configured.
+        # This value can be adjusted here or made configurable again if needed.
+        session_timeout_duration = 15 
         for prefix, sess in list(self.sessions.items()): # list() for safe iteration if modifying
-            if now - sess['last_seen'] >= self.timeout:
-                print(f"Watcher: Session {prefix} timed out.")
+            if now - sess['last_seen'] >= session_timeout_duration:
+                print(f"Watcher: Session {prefix} timed out (after {session_timeout_duration}s).")
                 to_flush.append(prefix)
         
         if to_flush:

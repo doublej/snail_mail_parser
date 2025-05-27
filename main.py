@@ -23,7 +23,7 @@ def main():
     q = Queue()
 
     # Initialize FolderWatcher and Processor
-    watcher = FolderWatcher(settings.scan_dir, q, settings.session_timeout_s)
+    watcher = FolderWatcher(settings.scan_dir, q)
     processor = Processor(settings, q)
 
     # watcher.start() # Call start if it performs necessary setup, otherwise it can be removed
@@ -40,7 +40,7 @@ def main():
         print("Flush complete.")
 
     print(f"Application started successfully. Monitoring {settings.scan_dir} for new files.")
-    print(f"Scan interval: {settings.scan_interval_s}s. Session timeout: {settings.session_timeout_s}s.")
+    print(f"Scan interval: {settings.scan_interval_s}s.")
     print("Press Ctrl+C to stop.")
 
     try:
