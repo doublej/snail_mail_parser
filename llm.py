@@ -10,7 +10,7 @@ from pathlib import Path # To ensure settings.output_dir is a Path object
 class DocumentType(str, Enum):
     LETTER = "letter"
     INVOICE = "invoice"
-    ADVERTISEMENT = "advertisement"
+    TAXES = "taxes"
     STATEMENT = "statement"
     FORM = "form"
     RECEIPT = "receipt"
@@ -62,7 +62,8 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, 
         "Analyze the provided OCR text and QR codes. Populate all fields of the LetterLLMResponse schema accurately. ",
         "For the 'sender' field, provide the sender's name in a simple, concise, and folder-friendly format (e.g., 'AcmeCorp' instead of 'Acme Corporation, Ltd. & Sons'). Avoid special characters that are problematic for directory names.",
         "The 'type' field must be one of the following: " + ", ".join([t.value for t in DocumentType if t != DocumentType.ERROR]) + ". ",
-        "Pay close attention to the multi-page document instructions if provided."
+        "Pay close attention to the multi-page document instructions if provided.",
+        "When asked to return the original content you can correct small OCR mistakes",
     ]
     system_prompt = "\n".join(system_prompt_parts)
 
