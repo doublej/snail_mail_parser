@@ -1,7 +1,20 @@
-from openai import OpenAI # Changed import
-from typing import List, Optional # Added Optional
+from openai import OpenAI
+from typing import List, Optional
 from pydantic import BaseModel, ValidationError
-import json # Added for robust JSON parsing
+import json # Kept for potential fallback or other uses, though primary parsing changes
+from enum import Enum # Added Enum
+
+# Define an Enum for document types
+class DocumentType(str, Enum):
+    LETTER = "letter"
+    INVOICE = "invoice"
+    ADVERTISEMENT = "advertisement"
+    STATEMENT = "statement"
+    FORM = "form"
+    RECEIPT = "receipt"
+    REPORT = "report"
+    OTHER = "other"
+    ERROR = "Error" # For fallback cases
 
 class Payment(BaseModel):
     iban: Optional[str] = None
@@ -13,7 +26,7 @@ class LetterLLMResponse(BaseModel):
     sender: str
     date_sent: str
     subject: str
-    type: str
+    type: DocumentType # Changed to use the Enum
     content: str
     qr_payloads: List[str]
     payment: Optional[Payment] = None # Allow payment to be None if not applicable
@@ -32,18 +45,19 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, 
         base_url=settings.llm_base_url,
     )
 
-    # Build prompt for classification
-    prompt_parts = [
-        "You are an AI assistant that classifies documents. "
-        "Given the OCR-extracted text of a document, extract relevant information into a JSON object.",
-        "The JSON object must include these fields: id, sender, date_sent, subject, type, content, qr_payloads (list of strings), "
-        "payment (an object with iban, amount, due_date), is_multipage_explicit (boolean), "
-        "is_information_complete (boolean), and belongs_to_open_doc_id (string or null).",
-        
-        f"\nDocument ID for the current page: {doc_id}",
+    # System prompt defining the AI's role and general instructions
+    system_prompt = (
+        "You are an AI assistant expert at extracting structured information from documents. "
+        "Analyze the provided OCR text and QR codes. Populate all fields of the LetterLLMResponse schema accurately. "
+        "The 'type' field must be one of the following: " + ", ".join([t.value for t in DocumentType if t != DocumentType.ERROR]) + ". "
+        "Pay close attention to the multi-page document instructions if provided."
+    )
+
+    # User prompt parts
+    user_prompt_parts = [
+        f"Document ID for the current page: {doc_id}",
         f"OCR Text: \"\"\"\n{text}\n\"\"\"",
         f"QR Payloads found on this page: {qr_payloads}",
-
         "\nMulti-page document considerations:",
         "- 'is_multipage_explicit': Set to true if the page explicitly mentions being part of a multi-page document (e.g., 'page 1 of 2', 'continued on next page'). Otherwise, false.",
         "- 'is_information_complete': Set to false if the text seems abruptly cut off or clearly incomplete. Otherwise, true.",
@@ -51,76 +65,87 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, 
     ]
 
     if open_docs_summary:
-        prompt_parts.append("\nCurrently Open Documents (documents awaiting more pages):")
-        if not open_docs_summary: # Ensure it's not an empty list causing issues
-             prompt_parts.append("  (None)")
+        user_prompt_parts.append("\nCurrently Open Documents (documents awaiting more pages):")
+        if not open_docs_summary:
+            user_prompt_parts.append("  (None)")
         for open_doc in open_docs_summary:
-            prompt_parts.append(f"  - ID: {open_doc['id']}, Subject: {open_doc['subject']}, Snippet: {open_doc['content_snippet']}...")
+            user_prompt_parts.append(f"  - ID: {open_doc['id']}, Subject: {open_doc['subject']}, Snippet: {open_doc['content_snippet']}...")
     else:
-        prompt_parts.append("\nNo documents are currently open and awaiting more pages.")
+        user_prompt_parts.append("\nNo documents are currently open and awaiting more pages.")
 
-    prompt_parts.append("\nReturn ONLY the JSON object.")
-    prompt = "\n".join(prompt_parts)
-    
-    completion = client.chat.completions.create(
-        model=settings.llm_model,
-        messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"} # Ensure your model/provider supports this
-    )
-    
-    raw_content = completion.choices[0].message.content
-    
-    # Parse JSON content from the LLM response
-    # The content should be a JSON string.
-    parsed_json_content = {}
-    if raw_content:
-        try:
-            parsed_json_content = json.loads(raw_content)
-        except json.JSONDecodeError as e:
-            print(f"Error decoding JSON from LLM: {e}")
-            print(f"Raw content from LLM: {raw_content}")
-            # Handle error appropriately, e.g., by returning a default/error response
-            # For now, we'll try to proceed with a potentially empty dict or raise error
-            # Or, create a default error LetterLLMResponse
-            # For simplicity, let's ensure 'id' is present and try to parse
-            parsed_json_content = {'id': doc_id, 'subject': 'Error: Invalid LLM Response'}
+    user_prompt = "\n".join(user_prompt_parts)
 
-
-    # Ensure our doc_id is used, overriding any ID from the LLM
-    parsed_json_content['id'] = doc_id
-    # Ensure qr_payloads is present if missing from LLM, and is a list
-    if 'qr_payloads' not in parsed_json_content or not isinstance(parsed_json_content.get('qr_payloads'), list):
-        parsed_json_content['qr_payloads'] = qr_payloads # Use the original qr_payloads if LLM doesn't provide valid ones
+    raw_content_for_error = "" # Store raw text for error reporting if needed
 
     try:
-        # Using model_validate for Pydantic V2
-        result = LetterLLMResponse.model_validate(parsed_json_content)
-    except ValidationError as e:
-        print(f"Pydantic validation error after attempting to parse LLM response: {e}")
-        print(f"Content given to Pydantic: {parsed_json_content}")
-        # Fallback or re-raise, here we create a minimal error response
-        # This ensures the function always returns a LetterLLMResponse object
-        # You might want to make this more robust based on requirements
-        # You might want to make this more robust based on requirements
-        error_subject = f"Validation Error: {e.errors()[0]['msg'] if e.errors() else 'Unknown validation error'}"
+        completion = client.beta.chat.completions.parse(
+            model=settings.llm_model, # Ensure this model supports structured outputs (e.g., gpt-4o)
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            response_format=LetterLLMResponse # Pass the Pydantic model directly
+        )
+
+        if completion.choices[0].message.refusal:
+            print(f"LLM refused to process request for doc_id {doc_id}: {completion.choices[0].message.refusal}")
+            # Create a fallback error response
+            error_subject = f"LLM Refusal: {completion.choices[0].message.refusal}"
+            # The raw_content might not be available or relevant in case of refusal before generation
+            # We'll use the refusal message as the content.
+            raw_content_for_error = f"Refusal: {completion.choices[0].message.refusal}"
+            raise ValueError(error_subject) # Trigger the common error handling path
+
+        result = completion.choices[0].message.parsed
+        if not result: # Should not happen if no refusal and parse is successful
+             raise ValueError("LLM returned no parsed data despite no refusal.")
+
+        # Ensure our doc_id is used, overriding any ID from the LLM
+        result.id = doc_id
+        # Ensure qr_payloads are correctly set if LLM missed them or returned non-list
+        if not isinstance(result.qr_payloads, list):
+            result.qr_payloads = qr_payloads
+
+        return result
+
+    except Exception as e: # Catch OpenAI API errors, validation errors from .parse(), or our ValueError
+        print(f"Error during LLM processing or Pydantic parsing for doc_id {doc_id}: {e}")
+        # If raw_content_for_error is not set, it means error happened before/during API call,
+        # so actual LLM output might not be available.
+        # If 'e' is a Pydantic ValidationError, it might have more details.
+        # If 'e' is an OpenAI API error, it will have its own structure.
+
+        error_subject_detail = str(e)
+        if isinstance(e, ValidationError):
+            error_subject_detail = f"{e.errors()[0]['msg'] if e.errors() else 'Unknown validation issue'}"
+        
+        error_subject = f"LLM/Validation Error: {error_subject_detail}"
+        
+        # Try to get raw content if available from the exception (e.g. if it's a custom error that wrapped it)
+        # For now, we rely on raw_content_for_error or a generic message.
+        # If the error is from client.beta.chat.completions.parse, the raw response might be harder to get
+        # than with the older client.chat.completions.create.
+        # The 'raw_content' variable from the old code isn't directly available here.
+        # We'll use a placeholder if specific raw output isn't captured.
+        
+        final_error_content = f"Failed to get valid structured response from LLM. Error: {str(e)}"
+        if raw_content_for_error: # This would be set if it was a refusal
+            final_error_content = f"LLM Refusal: {raw_content_for_error}"
+        
         print(f"Creating fallback error response for doc_id {doc_id} due to: {error_subject}")
         error_data = {
             "id": doc_id,
             "sender": "Unknown",
             "date_sent": "Unknown",
             "subject": error_subject,
-            "type": "Error",
-            "content": f"Failed to parse LLM response. Raw content was: {raw_content}",
-            "qr_payloads": qr_payloads, # Use original QR payloads
-            "payment": {"iban": None, "amount": None, "due_date": None}, # Default to None for payment fields
+            "type": DocumentType.ERROR, # Use the Enum for error type
+            "content": final_error_content,
+            "qr_payloads": qr_payloads, 
+            "payment": None, # Simpler fallback for payment
             "is_multipage_explicit": False,
-            "is_information_complete": True, # Assume complete on error, or could be False
+            "is_information_complete": True, 
             "belongs_to_open_doc_id": None
         }
-        result = LetterLLMResponse.model_validate(error_data)
-        
-    # Final override to ensure our doc_id is the one used.
-    # This is redundant if parsed_json_content['id'] = doc_id was effective and not overwritten by model_validate
-    # but good for safety.
-    result.id = doc_id
-    return result
+        # Validate the error data itself to ensure it conforms to LetterLLMResponse
+        # This should always pass if error_data is structured correctly.
+        return LetterLLMResponse.model_validate(error_data)
