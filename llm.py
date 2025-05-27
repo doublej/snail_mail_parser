@@ -16,7 +16,7 @@ class LetterLLMResponse(BaseModel):
     type: str
     content: str
     qr_payloads: List[str]
-    payment: Payment
+    payment: Optional[Payment] = None # Allow payment to be None if not applicable
     # New fields for multi-page document handling
     is_multipage_explicit: Optional[bool] = False # Does the page explicitly state it's part of a multi-page doc (e.g., "page 1 of 2")?
     is_information_complete: Optional[bool] = True # Does the page seem to contain a complete piece of information, or does it seem to be cut off?
