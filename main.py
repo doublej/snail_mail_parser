@@ -9,8 +9,8 @@ from watcher import FolderWatcher
 from processor import Processor
 
 def main():
-    # Configure logging to see watchdog's internal messages
-    logging.basicConfig(level=logging.DEBUG,  # Changed to DEBUG
+    # Configure logging
+    logging.basicConfig(level=logging.INFO, # Changed to INFO for less verbosity
                         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
     parser = argparse.ArgumentParser()
