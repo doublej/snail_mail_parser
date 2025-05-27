@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
 
 class Settings(BaseSettings):
@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     scan_interval_s: int = 1  # Interval in seconds for the main loop's idle time
     session_timeout_s: int = 15  # default timeout (seconds) for idle sessions/documents
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = 'utf-8'
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding='utf-8',
+        extra='ignore'
+    )
