@@ -2,9 +2,11 @@ from ruamel.yaml import YAML
 from llm import LetterLLMResponse, DocumentType
 from enum import Enum
 import re
-import shutil # Added for file copying
+import shutil
 from pathlib import Path
-from typing import List # Added for type hinting
+from typing import List
+from datetime import datetime # For facsimile date/time
+from jinja2 import Environment, BaseLoader # For Jinja2 templating
 
 # Attempt to import Pillow and PyMuPDF, handle if not available for preview generation
 try:
@@ -174,3 +176,100 @@ def save_output(letter: LetterLLMResponse, original_page_paths: List[Path], sett
     md_path = doc_root_dir / f"{letter.id}.md" # Save in doc_root_dir
     with open(md_path, 'w', encoding='utf-8') as mf: 
         mf.write(md_text)
+
+    # 4. Generate and Save Facsimile Output
+    # The template string provided by the user
+    facsimile_template_str = """===============================================================================
+                                FACSIMILE TRANSMISSION
+===============================================================================
+
+TO:        {{ recipient.name | upper }}                          DATE:     {{ date }}
+           {{ recipient.address }}               TIME:     {{ time }}
+           {{ recipient.city }}                                  PAGES:    {{ page_info }}
+
+FROM:      {{ sender.name }}                                 FAX:     {{ sender.fax }}
+           {{ sender.title }}            TEL:     {{ sender.phone }}
+
+RE:        {{ subject | upper }}
+===============================================================================
+
+{% for item in items %}
+{{ loop.index }}. {{ item.sender }} – {{ item.header }}
+   DATED: {{ item.date }}
+   RE: {{ item.subject }}
+   NOTES: {{ item.notes }}
+{% endfor %}
+
+===============================================================================
+PHYSICAL LETTERS IN YOUR TRAY | RED TAB = REQUIRES ACTION | 
+{{ closing_line }}
+===============================================================================
+
+{% for item in items %}
+--- PAGE {{ loop.index + 1 }} ---
+
+**{{ item.sender }} – FULL TEXT SUMMARY**
+
+{{ item.body | indent(4) }}
+
+**Margot’s Note:**  
+{{ item.margot_comment }}
+
+{% endfor %}
+
+===============================================================================
+{{ sender.name }}  •  TYPED AT {{ typed_time }}  •  {{ margot_flair }}
+===============================================================================
+"""
+    try:
+        now = datetime.now()
+        current_date_str = now.strftime("%Y-%m-%d")
+        current_time_str = now.strftime("%H:%M:%S")
+
+        # For a single letter, the facsimile has 1 cover page + 1 content page
+        num_content_pages = 1 
+        total_facsimile_pages = 1 + num_content_pages 
+        page_info_str = f"{total_facsimile_pages} (INC. COVER)"
+
+        facsimile_data = {
+            "recipient": { # Facsimile recipient details from settings
+                "name": settings.facsimile_recipient_name,
+                "address": settings.facsimile_recipient_address,
+                "city": settings.facsimile_recipient_city,
+            },
+            "sender": { # Facsimile sender details (MARGOT) from settings
+                "name": settings.facsimile_sender_name,
+                "title": settings.facsimile_sender_title,
+                "fax": settings.facsimile_sender_fax,
+                "phone": settings.facsimile_sender_phone,
+            },
+            "date": current_date_str,
+            "time": current_time_str,
+            "typed_time": current_time_str, # Using current time for "TYPED AT"
+            "page_info": page_info_str,
+            "subject": f"{settings.facsimile_subject_prefix}: {letter.subject if letter.subject else 'N/A'}",
+            "items": [ # The template loops through 'items'. For a single letter, this is a list with one item.
+                {
+                    "sender": letter.sender if letter.sender else "Unknown Sender",
+                    "header": letter.subject if letter.subject else "N/A", # Using letter's subject as header
+                    "date": letter.date_sent if letter.date_sent else "N/A",
+                    "subject": letter.subject if letter.subject else "N/A", # Letter's subject again for RE:
+                    "notes": settings.facsimile_item_notes_placeholder, # Placeholder from settings
+                    "body": letter.content if letter.content else "No content available.",
+                    "margot_comment": settings.facsimile_item_margot_comment_placeholder, # Placeholder from settings
+                }
+            ],
+            "closing_line": settings.facsimile_closing_line,
+            "margot_flair": settings.facsimile_margot_flair,
+        }
+
+        env = Environment(loader=BaseLoader())
+        template = env.from_string(facsimile_template_str)
+        facsimile_content = template.render(facsimile_data)
+
+        facsimile_path = doc_root_dir / f"{letter.id}_facsimile.txt"
+        with open(facsimile_path, 'w', encoding='utf-8') as ff:
+            ff.write(facsimile_content)
+            
+    except Exception as e:
+        print(f"Error generating facsimile for {letter.id}: {e}")
