@@ -1,0 +1,15 @@
+from pydantic_settings import BaseSettings
+from pathlib import Path
+
+class Settings(BaseSettings):
+    scan_dir: Path             # Directory to monitor for new files
+    output_dir: Path           # Directory to write YAML/Markdown outputs
+    session_timeout_s: int = 15
+    max_inflight: int = 1
+    llm_api_key: str
+    llm_model: str = "openai/gpt-4o"
+    llm_base_url: str = "https://openrouter.ai/api/v1"
+
+    class Config:
+        env_file = ".env"
+        env_file_encoding = 'utf-8'
