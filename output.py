@@ -1,14 +1,36 @@
 from ruamel.yaml import YAML
-from markdown_it import MarkdownIt
-from llm import LetterLLMResponse, DocumentType # Import necessary types
-from enum import Enum # For isinstance check
+# from markdown_it import MarkdownIt # MarkdownIt is not used if rendering is removed
+from llm import LetterLLMResponse, DocumentType 
+from enum import Enum 
+import re # Added for sanitizing folder names
+from pathlib import Path # To ensure Path operations
 
-def save_output(letter: LetterLLMResponse, settings): # Add type hint
+def _sanitize_foldername(name: str) -> str:
+    """Sanitizes a string to be a valid folder name."""
+    if not name or name.strip() == "":
+        name = "UnknownSender"
+    # Remove characters not allowed in folder names on common OS
+    # Keep alphanumeric, spaces, hyphens, underscores. Replace others.
+    name = re.sub(r'[^\w\s-]', '', name).strip()
+    # Replace spaces with underscores or remove them
+    name = re.sub(r'\s+', '_', name)
+    # Limit length if necessary (e.g., 50 chars)
+    return name[:50] if len(name) > 50 else name
+
+
+def save_output(letter: LetterLLMResponse, settings): 
     """
-    Save the LLM response as YAML and Markdown in the output directory.
+    Save the LLM response as YAML and Markdown in a sender-specific subfolder of the output directory.
     """
-    out_dir = settings.output_dir
-    out_dir.mkdir(parents=True, exist_ok=True)
+    base_output_dir = Path(settings.output_dir) # Ensure it's a Path object
+    
+    # Sanitize sender name for folder creation
+    # Use a default if sender is None or empty, though Pydantic model should prevent None for letter.sender
+    sender_name_for_folder = _sanitize_foldername(letter.sender if letter.sender else "UnknownSender")
+    
+    # Create sender-specific output directory
+    sender_out_dir = base_output_dir / sender_name_for_folder
+    sender_out_dir.mkdir(parents=True, exist_ok=True)
 
     # Handle payment information safely for YAML data
     payment_data_yaml = {}
@@ -44,9 +66,9 @@ def save_output(letter: LetterLLMResponse, settings): # Add type hint
     }
 
     # Write YAML file
-    yaml_path = out_dir / f"{letter.id}.yaml"
+    yaml_path = sender_out_dir / f"{letter.id}.yaml" # Use sender_out_dir
     yaml = YAML()
-    with open(yaml_path, 'w', encoding='utf-8') as yf: # Added encoding
+    with open(yaml_path, 'w', encoding='utf-8') as yf: 
         yaml.dump(data, yf)
 
     # Prepare Markdown content with metadata header
@@ -87,10 +109,10 @@ def save_output(letter: LetterLLMResponse, settings): # Add type hint
     md_text = "\n".join(md_lines)
     
     # The markdown-it rendering was for validation and can be removed as per instructions.
-    # md = MarkdownIt()
+    # md = MarkdownIt() # Ensure MarkdownIt is not imported if not used
     # _ = md.render(md_text) 
 
     # Write Markdown file
-    md_path = out_dir / f"{letter.id}.md"
-    with open(md_path, 'w', encoding='utf-8') as mf: # Added encoding
+    md_path = sender_out_dir / f"{letter.id}.md" # Use sender_out_dir
+    with open(md_path, 'w', encoding='utf-8') as mf: 
         mf.write(md_text)

@@ -1,8 +1,10 @@
 from openai import OpenAI
 from typing import List, Optional
 from pydantic import BaseModel, ValidationError
-import json # Kept for potential fallback or other uses, though primary parsing changes
-from enum import Enum # Added Enum
+import json 
+from enum import Enum
+import os # Added for listing directories
+from pathlib import Path # To ensure settings.output_dir is a Path object
 
 # Define an Enum for document types
 class DocumentType(str, Enum):
@@ -45,13 +47,25 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, 
         base_url=settings.llm_base_url,
     )
 
+    # List existing sender folders
+    existing_sender_folders = []
+    output_path = Path(settings.output_dir)
+    if output_path.exists() and output_path.is_dir():
+        try:
+            existing_sender_folders = [d.name for d in output_path.iterdir() if d.is_dir()]
+        except Exception as e:
+            print(f"Warning: Could not list sender folders in {output_path}: {e}")
+
     # System prompt defining the AI's role and general instructions
-    system_prompt = (
+    system_prompt_parts = [
         "You are an AI assistant expert at extracting structured information from documents. "
-        "Analyze the provided OCR text and QR codes. Populate all fields of the LetterLLMResponse schema accurately. "
-        "The 'type' field must be one of the following: " + ", ".join([t.value for t in DocumentType if t != DocumentType.ERROR]) + ". "
+        "Analyze the provided OCR text and QR codes. Populate all fields of the LetterLLMResponse schema accurately. ",
+        "For the 'sender' field, provide the sender's name in a simple, concise, and folder-friendly format (e.g., 'AcmeCorp' instead of 'Acme Corporation, Ltd. & Sons'). Avoid special characters that are problematic for directory names.",
+        "The 'type' field must be one of the following: " + ", ".join([t.value for t in DocumentType if t != DocumentType.ERROR]) + ". ",
         "Pay close attention to the multi-page document instructions if provided."
-    )
+    ]
+    system_prompt = "\n".join(system_prompt_parts)
+
 
     # User prompt parts
     user_prompt_parts = [
@@ -72,6 +86,14 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, 
             user_prompt_parts.append(f"  - ID: {open_doc['id']}, Subject: {open_doc['subject']}, Snippet: {open_doc['content_snippet']}...")
     else:
         user_prompt_parts.append("\nNo documents are currently open and awaiting more pages.")
+    
+    if existing_sender_folders:
+        user_prompt_parts.append("\nConsider these existing sender names/folders when determining the sender (try to be consistent if a similar sender already exists):")
+        for folder_name in existing_sender_folders:
+            user_prompt_parts.append(f"  - {folder_name}")
+    else:
+        user_prompt_parts.append("\nNo existing sender folders found to consider for sender name consistency.")
+
 
     user_prompt = "\n".join(user_prompt_parts)
 
