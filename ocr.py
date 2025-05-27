@@ -2,7 +2,8 @@ from pathlib import Path
 from typing import Tuple
 from PIL import Image
 import pytesseract
-from pdf2image import convert_from_path
+import fitz  # PyMuPDF
+import io
 
 def ocr_image(path: Path) -> Tuple[str, float]:
     """
@@ -24,13 +25,22 @@ def ocr_pdf(path: Path) -> Tuple[str, float]:
     """
     text_all = ""
     all_confs = []
-    images = convert_from_path(str(path))
-    for image in images:
-        text = pytesseract.image_to_string(image)
-        data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
+    
+    doc = fitz.open(path)
+    for page_num in range(len(doc)):
+        page = doc.load_page(page_num)
+        pix = page.get_pixmap() 
+        img_bytes = pix.tobytes("png")
+        
+        page_image = Image.open(io.BytesIO(img_bytes))
+
+        text = pytesseract.image_to_string(page_image)
+        data = pytesseract.image_to_data(page_image, output_type=pytesseract.Output.DICT)
         confs = [int(c) for c in data.get('conf', []) if c != '-1']
         if confs:
             all_confs.extend(confs)
         text_all += text + "\n"
+    
+    doc.close()
     mean_conf = sum(all_confs) / len(all_confs) if all_confs else 0.0
     return text_all, mean_conf
