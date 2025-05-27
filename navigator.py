@@ -104,6 +104,16 @@ def get_letter_llm_interactions(output_dir: Path, sender_name: str, doc_id: str)
     """Lists paths to LLM interaction logs for a document."""
     return get_letter_file_list(output_dir, sender_name, doc_id, "llm_interaction_logs")
 
+
+def get_letter_facsimile_path(output_dir: Path, sender_name: str, doc_id: str) -> Optional[Path]:
+    """Gets the path to the facsimile.txt file for a specific document."""
+    doc_path = _get_doc_path(output_dir, sender_name, doc_id)
+    if not doc_path:
+        return None
+    
+    facsimile_file = doc_path / f"{doc_id}_facsimile.txt"
+    return facsimile_file if facsimile_file.is_file() else None
+
 # Example usage (can be removed or placed under if __name__ == "__main__":)
 # if __name__ == "__main__":
 #     from settings import Settings # Assuming settings.py is in the same root
