@@ -27,28 +27,37 @@
             margin: 40px auto;
             padding: 0;
             position: relative;
+            /* Add perspective transform for 3D effect */
+            transform: perspective(1000px) rotateX(2deg);
+            transform-origin: center top;
+            /* Add subtle paper texture */
+            background-image: url("data:image/png;base64,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");
+            background-blend-mode: overlay;
+            background-size: 200px;
+            background-repeat: repeat;
         }
 
         .paper-content {
             flex: 1;
             padding: 32px 10px; /* Adjusted padding */
             position: relative;
-            background:
-                repeating-linear-gradient(
-                to bottom,
-                /* #e0f7fa 0px, */ /* Light blue bars */
-                /* #e0f7fa 24px, */
-                #f8f8f8 0px, /* No bars, plain paper */
-                #f8f8f8 24px, /* If you want bars, uncomment above and adjust this line */
-                #f8f8f8 24px,
-                #f8f8f8 48px 
-                );
-            /* Optional: green/blue bar stripes, adjust colors as needed */
-            /* border-left: 1px dashed #ccc; */ /* Removing side perforation lines from content area */
-            /* border-right: 1px dashed #ccc; */
-            min-height: 600px; /* Ensure paper has some height */
+<!--            background:-->
+<!--                repeating-linear-gradient(-->
+<!--                to bottom,-->
+<!--                /* #e0f7fa 0px, */ /* Light blue bars */-->
+<!--                /* #e0f7fa 24px, */-->
+<!--                #f8f8f8 0px, /* No bars, plain paper */-->
+<!--                #f8f8f8 24px, /* If you want bars, uncomment above and adjust this line */-->
+<!--                #f8f8f8 24px,-->
+<!--                #f8f8f8 48px-->
+<!--                );-->
+<!--            /* Optional: green/blue bar stripes, adjust colors as needed */-->
+<!--            min-height: 600px; /* Ensure paper has some height */-->
+<!--            /* Ensure content grows with text */-->
+            height: 100%;
+            box-sizing: border-box;
         }
-        
+
         .paper-content pre {
             font-family: 'Courier New', Courier, monospace;
             font-size: 14px; /* Adjusted for facsimile density */
@@ -61,54 +70,32 @@
 
         .sprocket {
             width: 32px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: flex-start;
-            padding-top: 16px; /* Initial offset for holes */
-            background: #f0f0f0; /* Slightly different background for sprocket area */
+            position: relative;
+            background-color: #f0f0f0; /* Slightly different background for sprocket area */
+            /* Create SVG background for sprocket holes */
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='42' viewBox='0 0 32 42'%3E%3Ccircle cx='16' cy='16' r='7' fill='white' stroke='%23bbb' stroke-width='2'/%3E%3C/svg%3E");
+            background-repeat: repeat-y;
+            background-position: center top;
         }
 
         .sprocket.left {
             border-right: 1px dashed #bbb;
+            /* Create dashed line that repeats with height */
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='42' viewBox='0 0 32 42'%3E%3Ccircle cx='16' cy='16' r='7' fill='white' stroke='%23bbb' stroke-width='2'/%3E%3C/svg%3E"),
+                              linear-gradient(to bottom, transparent 0%, transparent 100%);
+            background-position: center top, right;
+            background-size: auto, 1px 100%;
+            background-repeat: repeat-y, repeat-y;
         }
 
         .sprocket.right {
             border-left: 1px dashed #bbb;
-        }
-
-        /* Generate holes */
-        .sprocket::before { /* Simplified to one pseudo-element for repeating holes */
-            content: '';
-            display: block;
-            width: 14px;
-            height: 14px;
-            background: #fff; /* Hole color */
-            border: 2px solid #bbb; /* Hole border */
-            border-radius: 50%;
-            margin-bottom: 28px; /* Spacing between holes */
-            box-shadow: /* Vertical repetition of holes */
-                0 42px 0 0px #fff, 0 42px 0 2px #bbb, /* Hole 2 + border */
-                0 84px 0 0px #fff, 0 84px 0 2px #bbb, /* Hole 3 + border */
-                0 126px 0 0px #fff, 0 126px 0 2px #bbb,
-                0 168px 0 0px #fff, 0 168px 0 2px #bbb,
-                0 210px 0 0px #fff, 0 210px 0 2px #bbb,
-                0 252px 0 0px #fff, 0 252px 0 2px #bbb,
-                0 294px 0 0px #fff, 0 294px 0 2px #bbb,
-                0 336px 0 0px #fff, 0 336px 0 2px #bbb,
-                0 378px 0 0px #fff, 0 378px 0 2px #bbb,
-                0 420px 0 0px #fff, 0 420px 0 2px #bbb,
-                0 462px 0 0px #fff, 0 462px 0 2px #bbb,
-                0 504px 0 0px #fff, 0 504px 0 2px #bbb,
-                0 546px 0 0px #fff, 0 546px 0 2px #bbb,
-                0 588px 0 0px #fff, 0 588px 0 2px #bbb,
-                0 630px 0 0px #fff, 0 630px 0 2px #bbb,
-                0 672px 0 0px #fff, 0 672px 0 2px #bbb,
-                0 714px 0 0px #fff, 0 714px 0 2px #bbb,
-                0 756px 0 0px #fff, 0 756px 0 2px #bbb,
-                0 798px 0 0px #fff, 0 798px 0 2px #bbb,
-                0 840px 0 0px #fff, 0 840px 0 2px #bbb;
-                /* Add more for longer paper */
+            /* Create dashed line that repeats with height */
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='42' viewBox='0 0 32 42'%3E%3Ccircle cx='16' cy='16' r='7' fill='white' stroke='%23bbb' stroke-width='2'/%3E%3C/svg%3E"),
+                              linear-gradient(to bottom, transparent 0%, transparent 100%);
+            background-position: center top, left;
+            background-size: auto, 1px 100%;
+            background-repeat: repeat-y, repeat-y;
         }
         /* The .line for horizontal perforations is not used as the facsimile is one continuous block */
     </style>
