@@ -9,7 +9,8 @@ class Settings(BaseSettings):
     llm_model: str = "openai/gpt-4o"
     llm_base_url: str = "https://openrouter.ai/api/v1"
     scan_interval_s: int = 1  # Interval in seconds for the main loop's idle time
-    session_timeout_s: int = 15  # default timeout (seconds) for idle sessions/documents
+    # session_timeout_s: int = 15 # Removed, was for old watcher session logic
+    # document_timeout_s: int = 300 # Removed, processor auto-timeout logic is gone
 
     # Facsimile Specific Settings
     facsimile_recipient_name: str = "CENTRAL RECORDS"

@@ -1,21 +1,25 @@
 import traceback
 from datetime import datetime
 from queue import Queue
-import time # Added for timestamping open documents
+# import time # No longer needed for last_seen_timestamp
+import shutil # Added for rmtree in merge operation
+from pathlib import Path # Added for merge operation
+from typing import List, Dict, Any # For type hints
 
 from ocr import ocr_image, ocr_pdf
 from qr import scan_qr
-from llm import classify_document, LetterLLMResponse # Import LetterLLMResponse
+from llm import classify_document, LetterLLMResponse, DocumentType # Added DocumentType for Enum check
 from output import save_output
+import navigator # Added for merge operation
+from enum import Enum # Added for Enum check
 
 class Processor:
     def __init__(self, settings, queue: Queue):
         self.settings = settings
         self.queue = queue
         self.doc_seq = 0
-        self.open_documents = {}  # Stores doc_id -> {'letter_data': LetterLLMResponse, 'last_seen_timestamp': float}
-        # Assuming document_timeout_s will be in settings, e.g., settings.document_timeout_s = 300 (5 minutes)
-        self.document_timeout_s = getattr(settings, 'document_timeout_s', 300) 
+        self.open_documents = {}  # Stores doc_id -> {'letter_data': LetterLLMResponse, 'page_paths': List[Path]}
+        # self.document_timeout_s removed
 
     def get_new_doc_id(self) -> str:
         """Generate a new document ID: YYYYMMDD-XXXX sequence."""
@@ -116,7 +120,7 @@ class Processor:
                 # unless this page explicitly completes it (e.g. "page 2 of 2").
                 # The current Pydantic model doesn't capture "final page" explicitly, relies on is_information_complete.
 
-                open_doc_entry['last_seen_timestamp'] = time.time()
+                # open_doc_entry['last_seen_timestamp'] = time.time() # Removed
                 
                 if existing_letter_data.is_information_complete:
                     print(f"Processor: Document {existing_doc_id} now considered complete. Saving.")
@@ -134,8 +138,8 @@ class Processor:
                 print(f"Processor: Page {actual_doc_id} is part of a new multi-page document. Keeping it open.")
                 self.open_documents[actual_doc_id] = {
                     'letter_data': llm_response, 
-                    'last_seen_timestamp': time.time(),
-                    'page_paths': [current_page_path] # Initialize page_paths for the new open document
+                    # 'last_seen_timestamp': time.time(), # Removed
+                    'page_paths': [current_page_path] 
                 }
             else:
                 # This is a single, complete document.
@@ -155,25 +159,7 @@ class Processor:
                 ef.write(f"Error processing page: {current_page_path}\n")
                 ef.write(traceback.format_exc())
 
-    def check_open_document_timeouts(self):
-        """Checks for and flushes timed-out open documents."""
-        now = time.time()
-        timed_out_ids = []
-        for doc_id, data in self.open_documents.items():
-            if now - data['last_seen_timestamp'] > self.document_timeout_s:
-                timed_out_ids.append(doc_id)
-        
-        for doc_id in timed_out_ids:
-            print(f"Processor: Document {doc_id} timed out. Saving and closing.")
-            open_doc_entry = self.open_documents[doc_id]
-            data_to_save = open_doc_entry['letter_data']
-            page_paths_to_save = open_doc_entry.get('page_paths', []) # Get page_paths, default to empty list if missing
-
-            # Mark as complete because it timed out.
-            data_to_save.is_information_complete = True 
-            save_output(data_to_save, page_paths_to_save, self.settings)
-            del self.open_documents[doc_id]
-            print(f"Successfully processed and closed timed-out document: {doc_id}")
+    # def check_open_document_timeouts(self): # Method entirely removed
 
     def flush_open_documents(self):
         """Saves all currently open documents."""
@@ -193,6 +179,106 @@ class Processor:
             del self.open_documents[doc_id]
             print(f"Successfully flushed document: {doc_id}")
         print("Processor: All open documents flushed.")
+
+    def get_open_documents_summary(self) -> List[Dict[str, Any]]:
+        """Returns a summary of currently open multi-page documents."""
+        summary_list = []
+        for doc_id, data in self.open_documents.items():
+            letter_data = data['letter_data']
+            summary_list.append({
+                "id": doc_id,
+                "subject": letter_data.subject,
+                "sender": letter_data.sender,
+                "type": letter_data.type.value if isinstance(letter_data.type, Enum) else letter_data.type,
+                "page_count": len(data.get('page_paths', [])),
+                "is_information_complete_llm": letter_data.is_information_complete, # LLM's original assessment
+                "is_multipage_explicit_llm": letter_data.is_multipage_explicit # LLM's original assessment
+            })
+        return summary_list
+
+    def force_complete_open_document(self, doc_id: str) -> bool:
+        """Forces a specific open document to be considered complete, saves, and closes it."""
+        if doc_id in self.open_documents:
+            print(f"Processor: Force completing document {doc_id}.")
+            open_doc_entry = self.open_documents[doc_id]
+            data_to_save = open_doc_entry['letter_data']
+            page_paths_to_save = open_doc_entry.get('page_paths', [])
+
+            data_to_save.is_information_complete = True # Mark as complete by user action
+            save_output(data_to_save, page_paths_to_save, self.settings)
+            del self.open_documents[doc_id]
+            print(f"Successfully force-completed and closed document: {doc_id}")
+            return True
+        else:
+            print(f"Processor: Cannot force complete. Document ID {doc_id} not found in open documents.")
+            return False
+
+    def merge_processed_document_into_open_document(
+        self, 
+        target_open_doc_id: str, 
+        source_sender_name: str, 
+        source_doc_id: str
+    ) -> bool:
+        """
+        Merges an already processed and saved standalone document (source) 
+        into an existing open multi-page document (target).
+        The source document's folder will be deleted after successful merge.
+        """
+        output_base_dir = Path(self.settings.output_dir) # Use output_dir from settings
+
+        if target_open_doc_id not in self.open_documents:
+            print(f"Processor: Target open document {target_open_doc_id} not found.")
+            return False
+
+        source_yaml_data = navigator.get_letter_details_yaml(output_base_dir, source_sender_name, source_doc_id)
+        if not source_yaml_data:
+            print(f"Processor: Source document {source_doc_id} (sender: {source_sender_name}) YAML details not found.")
+            return False
+        
+        # Reconstruct source LetterLLMResponse to easily access fields with correct types
+        try:
+            # Ensure 'type' from YAML is converted back to DocumentType Enum if needed
+            source_type_str = source_yaml_data.get("type")
+            if source_type_str:
+                 source_yaml_data["type"] = DocumentType(source_type_str)
+            # Same for payment if it's a dict
+            if isinstance(source_yaml_data.get("payment"), dict):
+                from llm import Payment # Local import for pydantic model if not globally available
+                source_yaml_data["payment"] = Payment.model_validate(source_yaml_data["payment"])
+
+            source_letter = LetterLLMResponse.model_validate(source_yaml_data)
+        except Exception as e:
+            print(f"Processor: Error reconstructing source document {source_doc_id} from YAML: {e}")
+            return False
+        
+        source_content = source_letter.content
+        source_qr_payloads = source_letter.qr_payloads
+        source_original_scans_paths = navigator.get_letter_original_scans(output_base_dir, source_sender_name, source_doc_id)
+        
+        target_doc_entry = self.open_documents[target_open_doc_id]
+        target_letter_data = target_doc_entry['letter_data']
+
+        target_letter_data.content += f"\n\n--- Merged Page (Original Source ID: {source_doc_id}, Sender: {source_letter.sender}) ---\n\n{source_content}"
+        
+        if source_qr_payloads:
+            for qr in source_qr_payloads:
+                if qr not in target_letter_data.qr_payloads:
+                    target_letter_data.qr_payloads.append(qr)
+        
+        if source_original_scans_paths:
+            target_doc_entry.setdefault('page_paths', []).extend(source_original_scans_paths) # Ensure page_paths exists
+        
+        print(f"Processor: Merged source document {source_sender_name}/{source_doc_id} into {target_open_doc_id}.")
+
+        source_doc_folder_path = navigator._get_doc_path(output_base_dir, source_sender_name, source_doc_id)
+        if source_doc_folder_path and source_doc_folder_path.exists():
+            try:
+                shutil.rmtree(source_doc_folder_path)
+                print(f"Processor: Deleted original folder for merged document {source_doc_folder_path}.")
+            except Exception as e:
+                print(f"Processor: Error deleting folder for merged document {source_doc_folder_path}: {e}")
+        
+        return True
 
     def process_next_item_from_queue(self):
         """

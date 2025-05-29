@@ -29,15 +29,11 @@ def main():
     # watcher.start() # Call start if it performs necessary setup, otherwise it can be removed
                       # In the new watcher, start() is mostly a placeholder.
 
-    # If flush flag is set, flush existing sessions before starting the main loop
+    # If flush flag is set, call the processor's flush_open_documents method.
     if args.flush:
-        print("Flushing all pending sessions due to --flush flag...")
-        watcher.flush_all()
-        # Process any items flushed to the queue immediately
-        print("Processing flushed items...")
-        while not q.empty(): # Process until queue is empty
-            processor.process_next_item_from_queue()
-        print("Flush complete.")
+        print("Processor: --flush argument provided. Flushing all open documents...")
+        processor.flush_open_documents() 
+        print("Processor: Flushing of open documents by --flush argument is complete.")
 
     print(f"Application started successfully. Monitoring {settings.scan_dir} for new files.")
     print(f"Scan interval: {settings.scan_interval_s}s.")
@@ -48,9 +44,8 @@ def main():
             # 1. Scan for new files (watcher will add them to sessions or directly to queue)
             watcher.scan_for_new_files()
 
-            # 2. Check for and flush timed-out image sessions (watcher adds to queue)
-            watcher.check_session_timeouts()
-
+            # processor.check_open_document_timeouts() # This method has been removed from Processor
+            
             # 3. Process one item from the queue if available
             processed_item = processor.process_next_item_from_queue()
 
