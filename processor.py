@@ -5,7 +5,7 @@ from queue import Queue
 # import time # No longer needed for last_seen_timestamp
 import shutil # Added for rmtree in merge operation
 from pathlib import Path # Added for merge operation
-from typing import List, Dict, Any, Tuple  # For type hints
+from typing import List, Dict, Any, Tuple, Union  # For type hints
 
 import fitz
 from PIL import Image # Added for handling image files consistently
@@ -23,7 +23,7 @@ class Processor:
         self.settings = settings
         self.queue = queue
         self.doc_seq = 0
-        self.open_documents = {}  # Stores doc_id -> {'letter_data': LetterLLMResponse, 'page_paths': List[Path]}
+        self.open_documents = {}  # Stores doc_id -> {'letter_data': LetterLLMResponse, 'items_to_save': List[Union[Path, Image.Image]]}
         # self.document_timeout_s removed
 
     def get_new_doc_id(self) -> str:
@@ -151,10 +151,17 @@ class Processor:
                 open_doc_entry = self.open_documents[existing_doc_id]
                 existing_letter_data = open_doc_entry['letter_data']
                 
-                # Append current page path to the list of paths for this open document
-                if 'page_paths' not in open_doc_entry: # Should have been initialized, but good practice
-                    open_doc_entry['page_paths'] = []
-                open_doc_entry['page_paths'].append(current_page_path)
+                # Append current page's items (PIL images for PDF, or Path for image)
+                if 'items_to_save' not in open_doc_entry:
+                    open_doc_entry['items_to_save'] = []
+                
+                items_from_current_page: List[Union[Path, Image.Image]]
+                if current_page_path.suffix.lower() == '.pdf':
+                    items_from_current_page = images_to_process_pil # This is List[Image.Image]
+                else:
+                    items_from_current_page = [current_page_path] # This is List[Path]
+                
+                open_doc_entry['items_to_save'].extend(items_from_current_page)
 
                 # Append content (ensure newline separation)
                 existing_letter_data.content += f"\n\n--- Page Break (Original Page ID: {llm_response.id}) ---\n\n{llm_response.content}"
@@ -177,8 +184,9 @@ class Processor:
                 
                 if existing_letter_data.is_information_complete:
                     print(f"Processor: Document {existing_doc_id} now considered complete. Saving.")
-                    # Pass the accumulated page paths for this multi-page document
-                    save_output(existing_letter_data, open_doc_entry['page_paths'], self.settings)
+                    # Pass the accumulated items (PIL images or Paths) for this multi-page document
+                    items_to_save_list = open_doc_entry.get('items_to_save', [])
+                    save_output(existing_letter_data, items_to_save_list, self.settings)
                     del self.open_documents[existing_doc_id]
                     print(f"Successfully processed and closed multi-page document: {existing_doc_id}")
                 else:
@@ -190,16 +198,23 @@ class Processor:
                 actual_doc_id = llm_response.id 
                 print(f"Processor: Page {actual_doc_id} is part of a new multi-page document. Keeping it open.")
                 self.open_documents[actual_doc_id] = {
-                    'letter_data': llm_response, 
-                    # 'last_seen_timestamp': time.time(), # Removed
-                    'page_paths': [current_page_path] 
+                    'letter_data': llm_response,
+                    'items_to_save': images_to_process_pil if current_page_path.suffix.lower() == '.pdf' else [current_page_path]
                 }
             else:
                 # This is a single, complete document.
                 actual_doc_id = llm_response.id
                 print(f"Processor: Page {actual_doc_id} is a complete single-page document. Saving.")
-                # Pass the current page path as a list for this single-page document
-                save_output(llm_response, [current_page_path], self.settings)
+                
+                items_for_saving_originals: List[Union[Path, Image.Image]]
+                if current_page_path.suffix.lower() == '.pdf':
+                    # For PDFs, images_to_process_pil contains the PIL images of its pages.
+                    items_for_saving_originals = images_to_process_pil
+                else:
+                    # For original image files, pass the original file path.
+                    items_for_saving_originals = [current_page_path]
+                
+                save_output(llm_response, items_for_saving_originals, self.settings)
                 print(f"Successfully processed single-page document: {actual_doc_id}")
 
         except Exception:
@@ -225,10 +240,10 @@ class Processor:
             print(f"Processor: Flushing document {doc_id}.")
             open_doc_entry = self.open_documents[doc_id]
             data_to_save = open_doc_entry['letter_data']
-            page_paths_to_save = open_doc_entry.get('page_paths', []) # Get page_paths
+            items_to_save_list = open_doc_entry.get('items_to_save', []) # Get items_to_save
 
             data_to_save.is_information_complete = True 
-            save_output(data_to_save, page_paths_to_save, self.settings)
+            save_output(data_to_save, items_to_save_list, self.settings)
             del self.open_documents[doc_id]
             print(f"Successfully flushed document: {doc_id}")
         print("Processor: All open documents flushed.")
@@ -243,7 +258,7 @@ class Processor:
                 "subject": letter_data.subject,
                 "sender": letter_data.sender,
                 "type": letter_data.type.value if isinstance(letter_data.type, Enum) else letter_data.type,
-                "page_count": len(data.get('page_paths', [])),
+                "page_count": len(data.get('items_to_save', [])),
                 "is_information_complete_llm": letter_data.is_information_complete, # LLM's original assessment
                 "is_multipage_explicit_llm": letter_data.is_multipage_explicit # LLM's original assessment
             })
@@ -255,10 +270,10 @@ class Processor:
             print(f"Processor: Force completing document {doc_id}.")
             open_doc_entry = self.open_documents[doc_id]
             data_to_save = open_doc_entry['letter_data']
-            page_paths_to_save = open_doc_entry.get('page_paths', [])
+            items_to_save_list = open_doc_entry.get('items_to_save', [])
 
             data_to_save.is_information_complete = True # Mark as complete by user action
-            save_output(data_to_save, page_paths_to_save, self.settings)
+            save_output(data_to_save, items_to_save_list, self.settings)
             del self.open_documents[doc_id]
             print(f"Successfully force-completed and closed document: {doc_id}")
             return True
@@ -318,8 +333,8 @@ class Processor:
                 if qr not in target_letter_data.qr_payloads:
                     target_letter_data.qr_payloads.append(qr)
         
-        if source_original_scans_paths:
-            target_doc_entry.setdefault('page_paths', []).extend(source_original_scans_paths) # Ensure page_paths exists
+        if source_original_scans_paths: # These are List[Path] from navigator
+            target_doc_entry.setdefault('items_to_save', []).extend(source_original_scans_paths) # Ensure items_to_save exists
         
         print(f"Processor: Merged source document {source_sender_name}/{source_doc_id} into {target_open_doc_id}.")
 

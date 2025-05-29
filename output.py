@@ -4,7 +4,7 @@ from enum import Enum
 import re
 import shutil
 from pathlib import Path
-from typing import List
+from typing import List, Union # Add Union
 from datetime import datetime # For facsimile date/time
 from jinja2 import Environment, BaseLoader # For Jinja2 templating
 
@@ -33,7 +33,7 @@ def _sanitize_foldername(name: str) -> str:
     return name[:50] if len(name) > 50 else name
 
 
-def save_output(letter: LetterLLMResponse, original_page_paths: List[Path], settings):
+def save_output(letter: LetterLLMResponse, original_items: List[Union[Path, Image.Image]], settings):
     """
     Save the LLM response, original scans, previews, YAML, and Markdown
     into a document-specific subfolder: output_dir/sender/doc_id/.
@@ -49,49 +49,49 @@ def save_output(letter: LetterLLMResponse, original_page_paths: List[Path], sett
     # 1. Save Original Scans
     originals_dir = doc_root_dir / "original_scans"
     originals_dir.mkdir(exist_ok=True)
-    if original_page_paths:
-        for page_path in original_page_paths:
+    if original_items:
+        for idx, item in enumerate(original_items):
             try:
-                if page_path.exists():
-                    shutil.copy(page_path, originals_dir / page_path.name)
+                if isinstance(item, Path):
+                    if item.exists():
+                        shutil.copy(item, originals_dir / item.name)
+                    else:
+                        print(f"Warning: Original scan file not found: {item}")
+                elif isinstance(item, Image.Image):
+                    # Save PIL Image, e.g., as PNG. Generate a unique name.
+                    # Using original document ID and page index for clarity.
+                    filename = f"{letter.id}_original_page_{idx + 1:02d}.png"
+                    item.save(originals_dir / filename, "PNG")
                 else:
-                    print(f"Warning: Original scan file not found: {page_path}")
+                    print(f"Warning: Unknown type in original_items at index {idx}: {type(item)}")
             except Exception as e:
-                print(f"Error copying original scan {page_path.name}: {e}")
+                print(f"Error saving original item at index {idx} ({item}): {e}")
 
     # 2. Generate and Save Previews
     previews_dir = doc_root_dir / "previews"
     previews_dir.mkdir(exist_ok=True)
     preview_max_dim = 1024 # Max width/height for previews
 
-    if original_page_paths and (Image or fitz):
-        for idx, page_path in enumerate(original_page_paths):
-            preview_filename = f"preview_{page_path.stem}_{idx}.jpg"
+    # Iterate over the files saved in the originals_dir
+    saved_original_files = sorted([p for p in originals_dir.iterdir() if p.is_file()])
+
+    if saved_original_files and Image: # Check if Image (Pillow) is available
+        for idx, original_file_on_disk_path in enumerate(saved_original_files):
+            preview_filename = f"preview_{original_file_on_disk_path.stem}_{idx}.jpg"
             preview_save_path = previews_dir / preview_filename
             try:
-                if not page_path.exists():
-                    continue
-
-                img_to_save = None
-                if page_path.suffix.lower() in ['.pdf'] and fitz:
-                    doc = fitz.open(page_path)
-                    if len(doc) > 0:
-                        page = doc.load_page(0) # Preview first page of PDF
-                        pix = page.get_pixmap()
-                        img_to_save = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                    doc.close()
-                elif page_path.suffix.lower() in ['.png', '.jpg', '.jpeg', '.tif', '.tiff'] and Image:
-                    img_to_save = Image.open(page_path)
+                img_to_save = Image.open(original_file_on_disk_path)
                 
-                if img_to_save:
-                    img_to_save.thumbnail((preview_max_dim, preview_max_dim))
-                    if img_to_save.mode == 'RGBA' or img_to_save.mode == 'P': # Convert to RGB for JPEG
-                        img_to_save = img_to_save.convert('RGB')
-                    img_to_save.save(preview_save_path, "JPEG", quality=85)
+                img_to_save.thumbnail((preview_max_dim, preview_max_dim))
+                if img_to_save.mode == 'RGBA' or img_to_save.mode == 'P' or img_to_save.mode == 'LA': # Convert to RGB for JPEG
+                    img_to_save = img_to_save.convert('RGB')
+                img_to_save.save(preview_save_path, "JPEG", quality=85)
             except Exception as e:
-                print(f"Error generating preview for {page_path.name}: {e}")
-    elif not (Image or fitz):
-        print("Warning: Pillow and/or PyMuPDF not installed. Skipping preview generation.")
+                print(f"Error generating preview for {original_file_on_disk_path.name}: {e}")
+    elif not Image:
+        print("Warning: Pillow not installed. Skipping preview generation.")
+    elif not saved_original_files:
+        print(f"No original files found in {originals_dir} to generate previews for.")
 
 
     # 3. Prepare data for YAML and Markdown (existing logic)
