@@ -120,9 +120,10 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, 
         "For the 'explicit_document_id' field, extract any specific document identifier like 'Invoice No.', 'Reference #', 'Document ID', 'Betalingskenmerk', 'Factuurnummer' found directly on the letter. This should be an ID for the letter/document itself, not a general customer account number or BSN. If no such specific document ID is found, set this field to null or omit it.",
         "For the 'payment' field: If payment information (like amount, IBAN, due date) is present, this field MUST be an OBJECT containing sub-fields like 'amount', 'iban', 'due_date'. For example: \"payment\": {\"amount\": 123.45, \"iban\": \"NL00ABCD1234567890\", \"due_date\": \"2024-12-31\"}. If no payment information is found, the 'payment' field MUST be null. DO NOT put a simple string or number (e.g., '€ 4.459') directly into the 'payment' field itself; that value should go into the 'amount' sub-field WITHIN the 'payment' object.",
         "Pay close attention to the multi-page document instructions if provided. ",
-        "When returning the original content do so corrected and cleaned of any OCR artifacts or other errors. ",
-        "Return the original content as as markdown. ",
-        "Return any labels, id's, or other scannable or suspected tabular data as neatly formatted tabbed labels and values. ",
+        "Returning content corrected and cleaned of any OCR artifacts or other errors. Format it neatly",
+        "Return the content as as markdown. Do not label it, do not add \"```\".",
+        "Return any labels, id's, or other scannable or suspected tabular data as neatly formatted tabbed labels and values. These are placed in context where you found them.",
+        "If there is a sequence of characters, a part of the scan that is clearly jibberish from poor OCR recognition, or a part of the scan that is clearly not a letter, you may gather all these at the end of the content "
 
     ]
 
@@ -137,8 +138,8 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, 
         system_prompt_parts.extend([
                 "\nMulti-page document considerations:",
                 "- 'is_multipage_explicit': Set to true if the page explicitly mentions being part of a multi-page document (e.g., 'page 1 of 2', 'continued on next page'). Otherwise, false.",
-                "- 'is_information_complete': Set to false if the text seems obviously cut off or incomplete. Otherwise, true.",
-                "- 'belongs_to_open_doc_id': If this page belongs to one of the multipage candidates listed below, set this to the ID of that document. Otherwise, set it to null."
+                "- 'is_information_complete': Set to false if the text seems obviously cut off or incomplete and it is safe to assume its part of more pages. Otherwise, true.",
+                "- 'belongs_to_open_doc_id': If this page belongs to one of the multipage candidates listed below, set this to the ID of that document. Otherwise, set it to null.  If the sender and date is the same this is a strong indicator. If there is a message / correspondence ID this is a sure indicator."
             ])
 
         user_prompt_parts.append("\nCurrent multipage candidates:")

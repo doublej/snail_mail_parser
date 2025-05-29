@@ -34,7 +34,7 @@ def scan_qr(path_or_image: Union[Path, Image.Image]) -> List[str]:
         # Convert PIL Image to OpenCV format (NumPy array)
         # PIL Images are RGB(A), OpenCV uses BGR by default
         if pil_image.mode == 'RGBA':
-            pil_image = pil_image.convert('RGB') # Convert RGBA to RGB first
+            pil_image = pil_image.convert('RGB')  # Convert RGBA to RGB first
         
         image_np = np.array(pil_image)
         # Convert RGB to BGR

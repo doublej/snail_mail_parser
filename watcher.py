@@ -1,11 +1,10 @@
-import time
-import re
 # import threading # Removed
 from pathlib import Path
 from queue import Queue
 # from watchdog.observers.polling import PollingObserver as Observer # Removed
 # from watchdog.events import FileSystemEventHandler # Removed
 import os # For manual scanning
+
 
 class FolderWatcher: # No longer inherits from FileSystemEventHandler
     allowed_exts = {'.png', '.jpg', '.jpeg', '.tif', '.tiff', '.pdf'}
@@ -98,3 +97,5 @@ class FolderWatcher: # No longer inherits from FileSystemEventHandler
 
     # Removed flush_all method as session logic is gone.
     # The --flush CLI argument in main.py should now target processor.flush_open_documents() instead.
+
+
