@@ -41,11 +41,10 @@ def main():
 
     try:
         while True:
-            # 1. Scan for new files (watcher adds them to internal sessions)
+            # 1. Scan for new files (watcher will add them to the queue individually)
             watcher.scan_for_new_files()
 
-            # 2. Check for and flush timed-out image sessions from watcher to the queue
-            watcher.check_session_timeouts()
+            # 2. The call to watcher.check_session_timeouts() is removed as the method no longer exists.
             
             # 3. Process one item from the queue if available
             processed_item = processor.process_next_item_from_queue()

@@ -13,11 +13,7 @@ class FolderWatcher: # No longer inherits from FileSystemEventHandler
     def __init__(self, scan_dir: Path, queue: Queue):
         self.scan_dir = scan_dir
         self.queue = queue
-        # self.timeout = timeout # Removed
-        self.sessions = {}  # prefix -> {'pages': [(num, Path)], 'last_seen': timestamp}
-        self.pattern = re.compile(r"(.+)_([0-9]+)$")
-        # self._lock = threading.Lock() # Removed, operations are sequential
-        # self._running = False # Removed, no separate threads to manage state for
+        # self.sessions, self.pattern, self.timeout and related session logic removed
         self.known_files = set()
 
         # self.known_files is initialized as an empty set.
@@ -45,32 +41,23 @@ class FolderWatcher: # No longer inherits from FileSystemEventHandler
         pass
 
     def _handle_new_file(self, path: Path):
-        """Processes a single newly detected file."""
-
+        """
+        Processes a single newly detected file and enqueues it immediately.
+        All session-based grouping logic is removed.
+        """
         print(f"Watcher: Handling new file: {path}")
-        ext = path.suffix.lower()
+        ext = path.suffix.lower() # Still useful for logging or potential future filtering
 
-        # Extension check is technically done by scan_for_new_files, but good for safety
-        if ext not in self.allowed_exts: # Should not happen if called from scan_for_new_files
+        # This check should ideally be redundant if scan_for_new_files filters correctly,
+        # but it's a good safeguard.
+        if ext not in self.allowed_exts:
+            print(f"Watcher: File {path} with unsupported extension {ext} was handled. This should not happen if scan_for_new_files is correct.")
             return
 
-        # Handle image page (and now PDF pages too) for aggregation
-        stem = path.stem
-        m = self.pattern.match(stem)
-        if m:
-            prefix = m.group(1)
-            page_num = int(m.group(2))
-        else:
-            prefix = stem
-            page_num = 0
-        
-        # Lock removed as calls are sequential
-        if prefix not in self.sessions:
-            self.sessions[prefix] = {'pages': [], 'last_seen': time.time()}
-        session = self.sessions[prefix]
-        session['pages'].append((page_num, path))
-        session['last_seen'] = time.time()
-        print(f"Watcher: Added {path} to session {prefix}. Pages: {len(session['pages'])}")
+        # All allowed files (PDFs and images) are now treated as individual documents
+        # to be processed by the Processor. The Processor will use the LLM for multi-page determination.
+        print(f"Watcher: File {path} detected. Enqueuing as a single-item list for processing.")
+        self._flush_pages([path]) # Enqueue the file path as a list containing a single path
 
     def scan_for_new_files(self):
         """Scans the directory for new files and processes them."""
@@ -98,46 +85,16 @@ class FolderWatcher: # No longer inherits from FileSystemEventHandler
             # print(f"Watcher: No new files found.") # Can be noisy
 
         # Optional: Clean up known_files if files are deleted from disk
-        # self.known_files = self.known_files.intersection(current_files_on_disk)
+        # self.known_files = self.known_files.intersection(current_files_on_disk) # Optional cleanup
 
+    # Removed check_session_timeouts method as session logic is gone.
 
-    def check_session_timeouts(self):
-        """
-        Checks for and flushes timed-out image sessions.
-        This replaces the _session_checker thread.
-        """
-        # print("Watcher: Checking for session timeouts...") # Can be noisy
-        now = time.time()
-        to_flush = []
-        # Lock removed as calls are sequential
-        # Defaulting to a fixed 15-second timeout for sessions, as it was previously configured.
-        # This value can be adjusted here or made configurable again if needed.
-        session_timeout_duration = 15 
-        for prefix, sess in list(self.sessions.items()): # list() for safe iteration if modifying
-            if now - sess['last_seen'] >= session_timeout_duration:
-                print(f"Watcher: Session {prefix} timed out (after {session_timeout_duration}s).")
-                to_flush.append(prefix)
-        
-        if to_flush:
-            for prefix in to_flush:
-                sess = self.sessions.pop(prefix, None)
-                if sess:
-                    pages = [p for _, p in sorted(sess['pages'], key=lambda x: x[0])]
-                    self._flush_pages(pages)
-
-    def _flush_pages(self, pages):
+    def _flush_pages(self, pages): # pages is now expected to be a list with a single Path
         if pages:
             print(f"Watcher: Adding to queue: {pages}")
             self.queue.put(pages)
-        # else: # This log might be too verbose if called often with no pages
-            # print(f"Watcher: _flush_pages called with no pages. Nothing to queue.")
+        # else: 
+            # print(f"Watcher: _flush_pages called with no pages. Nothing to queue.") # Should not happen often now
 
-    def flush_all(self):
-        """Manually flush all sessions (used by --flush flag)."""
-        print("Watcher: Flushing all pending sessions...")
-        # Lock removed as calls are sequential (assuming --flush is handled before main loop or carefully)
-        for prefix, sess in list(self.sessions.items()):
-            pages = [p for _, p in sorted(sess['pages'], key=lambda x: x[0])]
-            self.queue.put(pages)
-            self.sessions.pop(prefix, None)
-        print("Watcher: All sessions flushed.")
+    # Removed flush_all method as session logic is gone.
+    # The --flush CLI argument in main.py should now target processor.flush_open_documents() instead.
