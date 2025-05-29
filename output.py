@@ -4,15 +4,26 @@ from enum import Enum
 import re
 import shutil
 from pathlib import Path
-from typing import List, Union # Add Union
+from typing import List, Union, Optional # Add Union, Optional
 from datetime import datetime # For facsimile date/time
 from jinja2 import Environment, BaseLoader # For Jinja2 templating
+import numpy as np # For handling preprocessed image arrays
+# cv2 might be needed if we decide to use its functions for color conversion,
+# but PIL.Image.fromarray and .convert should suffice.
+# import cv2 
 
 # Attempt to import Pillow and PyMuPDF, handle if not available for preview generation
 try:
     from PIL import Image
 except ImportError:
     Image = None # Placeholder if Pillow is not installed
+    # Ensure Image.fromarray is available if Image is not None
+    if Image:
+        try:
+            _ = Image.fromarray # Test availability
+        except AttributeError:
+            print("Warning: PIL.Image.fromarray not available. Preprocessed images might not be saved correctly.")
+
 
 try:
     import fitz # PyMuPDF
@@ -33,9 +44,14 @@ def _sanitize_foldername(name: str) -> str:
     return name[:50] if len(name) > 50 else name
 
 
-def save_output(letter: LetterLLMResponse, original_items: List[Union[Path, Image.Image]], settings):
+def save_output(
+    letter: LetterLLMResponse, 
+    original_items: List[Union[Path, Image.Image]], 
+    settings,
+    preprocessed_ocr_images: Optional[List[np.ndarray]] = None # New parameter
+):
     """
-    Save the LLM response, original scans, previews, YAML, and Markdown
+    Save the LLM response, original scans, preprocessed OCR images, previews, YAML, and Markdown
     into a document-specific subfolder: output_dir/sender/doc_id/.
     """
     base_output_dir = Path(settings.output_dir)
@@ -98,6 +114,39 @@ def save_output(letter: LetterLLMResponse, original_items: List[Union[Path, Imag
         print("Warning: Pillow not installed. Skipping preview generation.")
     elif not saved_original_files:
         print(f"No original files found in {originals_dir} to generate previews for.")
+
+    # X. Save Preprocessed OCR Images (New Section)
+    preprocessed_ocr_dir = doc_root_dir / "preprocessed_ocr_scans"
+    preprocessed_ocr_dir.mkdir(exist_ok=True)
+
+    if preprocessed_ocr_images and Image: # Check if Image (Pillow) and data are available
+        for idx, ocr_img_np in enumerate(preprocessed_ocr_images):
+            try:
+                # The preprocessed image from ocr.py is a NumPy array (likely grayscale)
+                # Convert NumPy array to PIL Image
+                # preprocess_image_for_ocr returns a binary image (single channel)
+                if ocr_img_np.ndim == 2: # Grayscale/Binary
+                    pil_ocr_image = Image.fromarray(ocr_img_np, mode='L')
+                elif ocr_img_np.ndim == 3 and ocr_img_np.shape[2] == 3: # BGR/RGB
+                    # If it were BGR from OpenCV, convert to RGB for PIL
+                    # pil_ocr_image = Image.fromarray(cv2.cvtColor(ocr_img_np, cv2.COLOR_BGR2RGB))
+                    # However, preprocess_image_for_ocr returns a binary image.
+                    # If it somehow returned color, this would be the place to handle it.
+                    # For now, assuming it's 'L' mode compatible.
+                    pil_ocr_image = Image.fromarray(ocr_img_np.astype(np.uint8)) # Ensure correct dtype
+                else:
+                    print(f"Warning: Preprocessed OCR image at index {idx} has unexpected shape: {ocr_img_np.shape}. Skipping.")
+                    continue
+                
+                # Save as PNG to preserve quality, especially for binary images
+                ocr_img_filename = f"preprocessed_ocr_page_{idx + 1:02d}.png"
+                pil_ocr_image.save(preprocessed_ocr_dir / ocr_img_filename, "PNG")
+            except Exception as e:
+                print(f"Error saving preprocessed OCR image at index {idx}: {e}")
+    elif not Image:
+        print("Warning: Pillow not installed. Skipping preprocessed OCR image saving.")
+    elif not preprocessed_ocr_images:
+        print(f"No preprocessed OCR images provided for {letter.id}.")
 
 
     # 3. Prepare data for YAML and Markdown (existing logic)

@@ -10,8 +10,9 @@ from typing import List, Dict, Any, Tuple, Union  # For type hints
 import fitz
 from PIL import Image # Added for handling image files consistently
 import pytesseract # Added for direct OCR on PIL Image
+import numpy as np # For type hinting preprocessed images
 
-from ocr import ocr_image  # ocr_pdf now returns List[Image.Image]
+from ocr import ocr_image  # ocr_image now returns text, confidence, and preprocessed_image
 from qr import scan_qr
 from llm import classify_document, LetterLLMResponse, DocumentType # Added DocumentType for Enum check
 from output import save_output
@@ -54,13 +55,12 @@ class Processor:
         current_page_path = pages[0]
         print(f"Processor: Starting processing for page: {current_page_path.name}")
 
-
-
         text_all = ""
         qr_payloads = []
-
-        # This list will hold PIL.Image.Image objects to be processed
+        # This list will hold PIL.Image.Image objects to be processed by OCR/QR
         images_to_process_pil: List[Image.Image] = []
+        # This list will hold the preprocessed images (np.ndarray) from OCR for saving
+        preprocessed_ocr_images_for_saving: List[np.ndarray] = []
 
         if current_page_path.suffix.lower() == '.pdf':
             print(f"Processor: Converting PDF {current_page_path.name} to images...")
@@ -91,10 +91,11 @@ class Processor:
 
             # Perform OCR on the PIL image
             print(f"Processor: OCRing {page_description}")
-            page_text, mean_conf = ocr_image(pil_image_page)
+            # ocr_image now returns: text, mean_conf, preprocessed_image_cv
+            page_text, mean_conf, preprocessed_image_cv = ocr_image(pil_image_page)
+            preprocessed_ocr_images_for_saving.append(preprocessed_image_cv) # Store for saving
 
             try:
-
                 text_all += page_text + "\n"
             except Exception as e:
                 print(f"Error during OCR for {page_description}: {e}")
@@ -147,8 +148,8 @@ class Processor:
             existing_letter_data = open_doc_entry['letter_data']
 
             # Append current page's items (PIL images for PDF, or Path for image)
-            if 'items_to_save' not in open_doc_entry:
-                open_doc_entry['items_to_save'] = []
+            open_doc_entry.setdefault('items_to_save', [])
+            open_doc_entry.setdefault('preprocessed_ocr_images', []) # Ensure list exists
 
             items_from_current_page: List[Union[Path, Image.Image]]
             if current_page_path.suffix.lower() == '.pdf':
@@ -157,6 +158,7 @@ class Processor:
                 items_from_current_page = [current_page_path] # This is List[Path]
 
             open_doc_entry['items_to_save'].extend(items_from_current_page)
+            open_doc_entry['preprocessed_ocr_images'].extend(preprocessed_ocr_images_for_saving) # Append preprocessed images
 
             # Append content (ensure newline separation)
             existing_letter_data.content += f"\n\n--- Page Break (Original Page ID: {llm_response.id}) ---\n\n{llm_response.content}"
@@ -179,9 +181,14 @@ class Processor:
 
             if existing_letter_data.is_information_complete:
                 print(f"Processor: Document {existing_doc_id} now considered complete. Saving.")
-                # Pass the accumulated items (PIL images or Paths) for this multi-page document
                 items_to_save_list = open_doc_entry.get('items_to_save', [])
-                save_output(existing_letter_data, items_to_save_list, self.settings)
+                preprocessed_images_list = open_doc_entry.get('preprocessed_ocr_images', [])
+                save_output(
+                    letter=existing_letter_data, 
+                    original_items=items_to_save_list, 
+                    settings=self.settings,
+                    preprocessed_ocr_images=preprocessed_images_list
+                )
                 del self.open_documents[existing_doc_id]
                 print(f"Successfully processed and closed multi-page document: {existing_doc_id}")
             else:
@@ -194,7 +201,8 @@ class Processor:
             print(f"Processor: Page {actual_doc_id} is part of a new multi-page document. Keeping it open.")
             self.open_documents[actual_doc_id] = {
                 'letter_data': llm_response,
-                'items_to_save': images_to_process_pil if current_page_path.suffix.lower() == '.pdf' else [current_page_path]
+                'items_to_save': images_to_process_pil if current_page_path.suffix.lower() == '.pdf' else [current_page_path],
+                'preprocessed_ocr_images': preprocessed_ocr_images_for_saving # Store preprocessed images
             }
         else:
             # This is a single, complete document.
@@ -209,7 +217,12 @@ class Processor:
                 # For original image files, pass the original file path.
                 items_for_saving_originals = [current_page_path]
 
-            save_output(llm_response, items_for_saving_originals, self.settings)
+            save_output(
+                letter=llm_response, 
+                original_items=items_for_saving_originals, 
+                settings=self.settings,
+                preprocessed_ocr_images=preprocessed_ocr_images_for_saving # Pass preprocessed images
+            )
             print(f"Successfully processed single-page document: {actual_doc_id}")
 
 
@@ -226,10 +239,16 @@ class Processor:
             print(f"Processor: Flushing document {doc_id}.")
             open_doc_entry = self.open_documents[doc_id]
             data_to_save = open_doc_entry['letter_data']
-            items_to_save_list = open_doc_entry.get('items_to_save', []) # Get items_to_save
+            items_to_save_list = open_doc_entry.get('items_to_save', [])
+            preprocessed_images_list = open_doc_entry.get('preprocessed_ocr_images', [])
 
             data_to_save.is_information_complete = True 
-            save_output(data_to_save, items_to_save_list, self.settings)
+            save_output(
+                letter=data_to_save, 
+                original_items=items_to_save_list, 
+                settings=self.settings,
+                preprocessed_ocr_images=preprocessed_images_list
+            )
             del self.open_documents[doc_id]
             print(f"Successfully flushed document: {doc_id}")
         print("Processor: All open documents flushed.")
@@ -257,9 +276,15 @@ class Processor:
             open_doc_entry = self.open_documents[doc_id]
             data_to_save = open_doc_entry['letter_data']
             items_to_save_list = open_doc_entry.get('items_to_save', [])
+            preprocessed_images_list = open_doc_entry.get('preprocessed_ocr_images', [])
 
             data_to_save.is_information_complete = True # Mark as complete by user action
-            save_output(data_to_save, items_to_save_list, self.settings)
+            save_output(
+                letter=data_to_save, 
+                original_items=items_to_save_list, 
+                settings=self.settings,
+                preprocessed_ocr_images=preprocessed_images_list
+            )
             del self.open_documents[doc_id]
             print(f"Successfully force-completed and closed document: {doc_id}")
             return True
