@@ -46,17 +46,13 @@ class FolderWatcher: # No longer inherits from FileSystemEventHandler
 
     def _handle_new_file(self, path: Path):
         """Processes a single newly detected file."""
+
         print(f"Watcher: Handling new file: {path}")
         ext = path.suffix.lower()
+
         # Extension check is technically done by scan_for_new_files, but good for safety
         if ext not in self.allowed_exts: # Should not happen if called from scan_for_new_files
             return
-
-        # REMOVED: Special handling for PDFs. PDFs will now go through the same session logic as images.
-        # if ext == '.pdf':
-        #     print(f"Watcher: PDF detected: {path}. Attempting to enqueue.")
-        #     self._flush_pages([path]) # PDF is standalone - enqueue immediately
-        #     return
 
         # Handle image page (and now PDF pages too) for aggregation
         stem = path.stem
