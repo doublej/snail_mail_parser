@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Tuple  # Added List
+from typing import Tuple, List # Added List
 from PIL import Image
 import pytesseract
 
@@ -61,21 +61,21 @@ def preprocess_image_for_ocr(pil_image):
     return binary
 
 
-def ocr_image(image: Image.Image) -> Tuple[str, float]:
+def ocr_image(image: Image.Image) -> Tuple[str, float, np.ndarray]: # Updated return type hint
     """
     Perform OCR on an image file.
-    Returns extracted text and mean confidence.
+    Returns extracted text, mean confidence, and the preprocessed image (numpy array).
     """
 
-    image = preprocess_image_for_ocr(image)
+    preprocessed_image_cv = preprocess_image_for_ocr(image) # Renamed variable for clarity
 
-    text = pytesseract.image_to_string(image)
+    text = pytesseract.image_to_string(preprocessed_image_cv) # Use the preprocessed image for OCR
 
     # Get OCR data to compute confidence scores
-    data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
+    data = pytesseract.image_to_data(preprocessed_image_cv, output_type=pytesseract.Output.DICT) # Use preprocessed image
 
     confs = [int(c) for c in data.get('conf', []) if c != '-1']
 
     mean_conf = sum(confs) / len(confs) if confs else 0.0
 
-    return text, mean_conf, image
+    return text, mean_conf, preprocessed_image_cv

@@ -48,7 +48,8 @@ def save_output(
     letter: LetterLLMResponse, 
     original_items: List[Union[Path, Image.Image]], 
     settings,
-    preprocessed_ocr_images: Optional[List[np.ndarray]] = None # New parameter
+    preprocessed_ocr_images: Optional[List[np.ndarray]] = None, # Existing parameter
+    raw_ocr_text: Optional[str] = None # New parameter for raw OCR text
 ):
     """
     Save the LLM response, original scans, preprocessed OCR images, previews, YAML, and Markdown
@@ -115,7 +116,7 @@ def save_output(
     elif not saved_original_files:
         print(f"No original files found in {originals_dir} to generate previews for.")
 
-    # X. Save Preprocessed OCR Images (New Section)
+    # 3. Save Preprocessed OCR Images
     preprocessed_ocr_dir = doc_root_dir / "preprocessed_ocr_scans"
     preprocessed_ocr_dir.mkdir(exist_ok=True)
 
@@ -148,8 +149,19 @@ def save_output(
     elif not preprocessed_ocr_images:
         print(f"No preprocessed OCR images provided for {letter.id}.")
 
+    # 4. Save Raw OCR Text (New Section)
+    raw_ocr_output_path = doc_root_dir / "raw_ocr_output.txt"
+    if raw_ocr_text:
+        try:
+            with open(raw_ocr_output_path, 'w', encoding='utf-8') as f:
+                f.write(raw_ocr_text)
+        except Exception as e:
+            print(f"Error saving raw OCR text for {letter.id}: {e}")
+    else:
+        print(f"Warning: No raw OCR text provided for {letter.id}. Skipping raw_ocr_output.txt creation.")
 
-    # 3. Prepare data for YAML and Markdown (existing logic)
+
+    # 5. Prepare data for YAML and Markdown (existing logic)
     payment_data_yaml = {}
     if letter.payment is not None:
         payment_data_yaml = {
@@ -232,7 +244,7 @@ def save_output(
     with open(md_path, 'w', encoding='utf-8') as mf: 
         mf.write(md_text)
 
-    # 4. Generate and Save Facsimile Output
+    # 6. Generate and Save Facsimile Output
     # The template string provided by the user
     facsimile_template_str = """===============================================================================
                                 FACSIMILE TRANSMISSION

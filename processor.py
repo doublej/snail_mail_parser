@@ -5,7 +5,7 @@ from queue import Queue
 # import time # No longer needed for last_seen_timestamp
 import shutil # Added for rmtree in merge operation
 from pathlib import Path # Added for merge operation
-from typing import List, Dict, Any, Tuple, Union  # For type hints
+from typing import List, Dict, Any, Tuple, Union, Optional  # For type hints
 
 import fitz
 from PIL import Image # Added for handling image files consistently
@@ -24,7 +24,8 @@ class Processor:
         self.settings = settings
         self.queue = queue
         self.doc_seq = 0
-        self.open_documents = {}  # Stores doc_id -> {'letter_data': LetterLLMResponse, 'items_to_save': List[Union[Path, Image.Image]]}
+        # Stores doc_id -> {'letter_data': LetterLLMResponse, 'items_to_save': List[Union[Path, Image.Image]], 'preprocessed_ocr_images': List[np.ndarray], 'raw_ocr_text_content': str}
+        self.open_documents = {}  
         # self.document_timeout_s removed
 
     def get_new_doc_id(self) -> str:
@@ -55,7 +56,7 @@ class Processor:
         current_page_path = pages[0]
         print(f"Processor: Starting processing for page: {current_page_path.name}")
 
-        text_all = ""
+        text_all = "" # This will accumulate raw OCR text for the current input file (could be multi-page PDF)
         qr_payloads = []
         # This list will hold PIL.Image.Image objects to be processed by OCR/QR
         images_to_process_pil: List[Image.Image] = []
@@ -96,7 +97,7 @@ class Processor:
             preprocessed_ocr_images_for_saving.append(preprocessed_image_cv) # Store for saving
 
             try:
-                text_all += page_text + "\n"
+                text_all += page_text + "\n" # Accumulate raw OCR text for the current input file
             except Exception as e:
                 print(f"Error during OCR for {page_description}: {e}")
 
@@ -150,6 +151,7 @@ class Processor:
             # Append current page's items (PIL images for PDF, or Path for image)
             open_doc_entry.setdefault('items_to_save', [])
             open_doc_entry.setdefault('preprocessed_ocr_images', []) # Ensure list exists
+            open_doc_entry.setdefault('raw_ocr_text_content', '') # Ensure raw OCR text content exists
 
             items_from_current_page: List[Union[Path, Image.Image]]
             if current_page_path.suffix.lower() == '.pdf':
@@ -159,6 +161,7 @@ class Processor:
 
             open_doc_entry['items_to_save'].extend(items_from_current_page)
             open_doc_entry['preprocessed_ocr_images'].extend(preprocessed_ocr_images_for_saving) # Append preprocessed images
+            open_doc_entry['raw_ocr_text_content'] += f"\n\n--- Page Break (Original Page ID: {llm_response.id}) ---\n\n{text_all}" # Append raw OCR text
 
             # Append content (ensure newline separation)
             existing_letter_data.content += f"\n\n--- Page Break (Original Page ID: {llm_response.id}) ---\n\n{llm_response.content}"
@@ -183,11 +186,13 @@ class Processor:
                 print(f"Processor: Document {existing_doc_id} now considered complete. Saving.")
                 items_to_save_list = open_doc_entry.get('items_to_save', [])
                 preprocessed_images_list = open_doc_entry.get('preprocessed_ocr_images', [])
+                raw_ocr_text_to_save = open_doc_entry.get('raw_ocr_text_content', '')
                 save_output(
                     letter=existing_letter_data, 
                     original_items=items_to_save_list, 
                     settings=self.settings,
-                    preprocessed_ocr_images=preprocessed_images_list
+                    preprocessed_ocr_images=preprocessed_images_list,
+                    raw_ocr_text=raw_ocr_text_to_save
                 )
                 del self.open_documents[existing_doc_id]
                 print(f"Successfully processed and closed multi-page document: {existing_doc_id}")
@@ -202,7 +207,8 @@ class Processor:
             self.open_documents[actual_doc_id] = {
                 'letter_data': llm_response,
                 'items_to_save': images_to_process_pil if current_page_path.suffix.lower() == '.pdf' else [current_page_path],
-                'preprocessed_ocr_images': preprocessed_ocr_images_for_saving # Store preprocessed images
+                'preprocessed_ocr_images': preprocessed_ocr_images_for_saving, # Store preprocessed images
+                'raw_ocr_text_content': text_all # Store raw OCR text for this initial page(s)
             }
         else:
             # This is a single, complete document.
@@ -221,7 +227,8 @@ class Processor:
                 letter=llm_response, 
                 original_items=items_for_saving_originals, 
                 settings=self.settings,
-                preprocessed_ocr_images=preprocessed_ocr_images_for_saving # Pass preprocessed images
+                preprocessed_ocr_images=preprocessed_ocr_images_for_saving, # Pass preprocessed images
+                raw_ocr_text=text_all # Pass raw OCR text for this single document
             )
             print(f"Successfully processed single-page document: {actual_doc_id}")
 
@@ -241,13 +248,15 @@ class Processor:
             data_to_save = open_doc_entry['letter_data']
             items_to_save_list = open_doc_entry.get('items_to_save', [])
             preprocessed_images_list = open_doc_entry.get('preprocessed_ocr_images', [])
+            raw_ocr_text_to_save = open_doc_entry.get('raw_ocr_text_content', '')
 
             data_to_save.is_information_complete = True 
             save_output(
                 letter=data_to_save, 
                 original_items=items_to_save_list, 
                 settings=self.settings,
-                preprocessed_ocr_images=preprocessed_images_list
+                preprocessed_ocr_images=preprocessed_images_list,
+                raw_ocr_text=raw_ocr_text_to_save
             )
             del self.open_documents[doc_id]
             print(f"Successfully flushed document: {doc_id}")
@@ -277,13 +286,15 @@ class Processor:
             data_to_save = open_doc_entry['letter_data']
             items_to_save_list = open_doc_entry.get('items_to_save', [])
             preprocessed_images_list = open_doc_entry.get('preprocessed_ocr_images', [])
+            raw_ocr_text_to_save = open_doc_entry.get('raw_ocr_text_content', '')
 
             data_to_save.is_information_complete = True # Mark as complete by user action
             save_output(
                 letter=data_to_save, 
                 original_items=items_to_save_list, 
                 settings=self.settings,
-                preprocessed_ocr_images=preprocessed_images_list
+                preprocessed_ocr_images=preprocessed_images_list,
+                raw_ocr_text=raw_ocr_text_to_save
             )
             del self.open_documents[doc_id]
             print(f"Successfully force-completed and closed document: {doc_id}")
@@ -347,6 +358,11 @@ class Processor:
         if source_original_scans_paths: # These are List[Path] from navigator
             target_doc_entry.setdefault('items_to_save', []).extend(source_original_scans_paths) # Ensure items_to_save exists
         
+        # Note: We are not merging raw_ocr_text_content from the source document here.
+        # The raw_ocr_text_content for the target document should only reflect the OCR
+        # performed on its own pages as they were processed. The LLM content from the
+        # merged document is appended to the target's LLM content.
+
         print(f"Processor: Merged source document {source_sender_name}/{source_doc_id} into {target_open_doc_id}.")
 
         source_doc_folder_path = navigator._get_doc_path(output_base_dir, source_sender_name, source_doc_id)
@@ -375,7 +391,7 @@ class Processor:
     # The run() method and _worker() method are removed as processing is now driven by main.py
 
 
-def convert_pdf_to_pil(path: Path) -> Tuple[str, float, List[str]]:
+def convert_pdf_to_pil(path: Path) -> List[Image.Image]: # Changed return type hint to List[Image.Image]
     """
     Convert PDF to a list of PIL Image objects, one for each page.
     Does NOT perform OCR or QR scanning itself.
