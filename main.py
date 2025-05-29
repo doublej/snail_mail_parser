@@ -60,14 +60,20 @@ def main():
                 time.sleep(0.1) 
 
     except KeyboardInterrupt:
-        print("\nShutting down...")
-        watcher.stop() # Call stop if it performs necessary cleanup
+        print("\nCtrl+C pressed. Shutting down gracefully...")
         
-        # Process any remaining items in the queue before exiting
-        print("Processing remaining items in queue...")
+        print("Stopping file watcher to prevent new items from being queued...")
+        watcher.stop() 
+        
+        print("Processing any remaining items already in the queue...")
         while not q.empty():
             processor.process_next_item_from_queue()
-        print("All items processed. Exiting.")
+        print("Queue processing complete.")
+
+        print("Flushing all open document sessions (saving them as complete)...")
+        processor.flush_open_documents() 
+        
+        print("Application shutdown complete. All open work has been saved.")
 
 if __name__ == '__main__':
     main()
