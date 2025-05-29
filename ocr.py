@@ -10,7 +10,20 @@ from matplotlib import pyplot as plt
 
 
 def display_image(title, image):
-    plt.figure(figsize=(8.27, 11.69))  # Width x Height
+    # Get image dimensions (height, width)
+    if len(image.shape) == 2:  # Grayscale
+        img_height, img_width = image.shape
+    else:  # Color
+        img_height, img_width, _ = image.shape
+
+    # Get DPI for the figure
+    dpi = plt.rcParams['figure.dpi']
+
+    # Calculate figure size in inches
+    figsize_width = img_width / dpi
+    figsize_height = img_height / dpi
+
+    plt.figure(figsize=(figsize_width, figsize_height))
     if len(image.shape) == 2:  # Grayscale
         plt.imshow(image, cmap='gray')
     else:  # Color
