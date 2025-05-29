@@ -96,6 +96,12 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, 
         base_url=settings.llm_base_url,
     )
 
+    response_log_data = {}
+    error_log_details = {}
+    # This will hold the Pydantic model instance to be returned
+    returned_response_object: Optional[LetterLLMResponse] = None
+    # This will hold the sender name determined from the response, for logging path
+
     # List existing sender folders
     existing_sender_folders = []
     output_path = Path(settings.output_dir)
@@ -108,35 +114,40 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, 
     # System prompt defining the AI's role and general instructions
     system_prompt_parts = [
         "You are an AI assistant expert at extracting structured information from documents. "
-        "Analyze the provided OCR text and QR codes. Populate all fields of the LetterLLMResponse schema accurately. ",
-        "For the 'sender' field, provide the sender's name in a simple, concise, and folder-friendly format (e.g., 'AcmeCorp' instead of 'Acme Corporation, Ltd. & Sons'). Avoid special characters that are problematic for directory names.",
+        "Analyze the provided OCR generated text and QR codes. Populate all fields of the LetterLLMResponse schema accurately. ",
+        "For the 'sender' field, provide the sender's name in a simple, concise, and folder-friendly format (e.g., 'Belastingdienst' instead of 'Belasting-dienst Amersfoort'). Avoid special characters that are problematic for directory names.",
         "The 'type' field must be one of the following: " + ", ".join([t.value for t in DocumentType if t != DocumentType.ERROR]) + ". ",
-        "Pay close attention to the multi-page document instructions if provided.",
-        "When asked to return the original content you can correct small OCR mistakes",
-    ]
-    system_prompt = "\n".join(system_prompt_parts)
+        "Pay close attention to the multi-page document instructions if provided. ",
+        "When returning the original content do so corrected and cleaned of any OCR artifacts or other errors. ",
+        "Return the original content as as markdown. ",
+        "Return any labels, id's, or other scannable or suspected tabular data as neatly formatted tabbed labels and values. ",
 
+    ]
 
     # User prompt parts
     user_prompt_parts = [
         f"Document ID for the current page: {doc_id}",
         f"OCR Text: \"\"\"\n{text}\n\"\"\"",
         f"QR Payloads found on this page: {qr_payloads}",
-        "\nMulti-page document considerations:",
-        "- 'is_multipage_explicit': Set to true if the page explicitly mentions being part of a multi-page document (e.g., 'page 1 of 2', 'continued on next page'). Otherwise, false.",
-        "- 'is_information_complete': Set to false if the text seems abruptly cut off or clearly incomplete. Otherwise, true.",
-        "- 'belongs_to_open_doc_id': If this page belongs to one of the 'Currently Open Documents' listed below, set this to the ID of that document. Otherwise, set it to null."
     ]
 
     if open_docs_summary:
-        user_prompt_parts.append("\nCurrently Open Documents (documents awaiting more pages):")
+        system_prompt_parts.extend([
+                "\nMulti-page document considerations:",
+                "- 'is_multipage_explicit': Set to true if the page explicitly mentions being part of a multi-page document (e.g., 'page 1 of 2', 'continued on next page'). Otherwise, false.",
+                "- 'is_information_complete': Set to false if the text seems obviously cut off or incomplete. Otherwise, true.",
+                "- 'belongs_to_open_doc_id': If this page belongs to one of the multipage candidates listed below, set this to the ID of that document. Otherwise, set it to null."
+            ])
+
+        user_prompt_parts.append("\nCurrent multipage candidates:")
+
         if not open_docs_summary:
             user_prompt_parts.append("  (None)")
         for open_doc in open_docs_summary:
             user_prompt_parts.append(f"  - ID: {open_doc['id']}, Subject: {open_doc['subject']}, Snippet: {open_doc['content_snippet']}...")
     else:
         user_prompt_parts.append("\nNo documents are currently open and awaiting more pages.")
-    
+
     if existing_sender_folders:
         user_prompt_parts.append("\nConsider these existing sender names/folders when determining the sender (try to be consistent if a similar sender already exists):")
         for folder_name in existing_sender_folders:
@@ -144,7 +155,8 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, 
     else:
         user_prompt_parts.append("\nNo existing sender folders found to consider for sender name consistency.")
 
-
+    # Combine system and user prompts into one string for the LLM
+    system_prompt = "\n".join(system_prompt_parts)
     user_prompt = "\n".join(user_prompt_parts)
 
     # Logging related initializations
@@ -153,12 +165,8 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, 
         "system_prompt": system_prompt,
         "user_prompt": user_prompt
     }
-    response_log_data = {}
-    error_log_details = {}
-    # This will hold the Pydantic model instance to be returned
-    returned_response_object: Optional[LetterLLMResponse] = None 
-    # This will hold the sender name determined from the response, for logging path
-    final_sender_name_for_log_path: str = "UnknownSender_LLMLog" 
+
+    final_sender_name_for_log_path: str = "UnknownSender_LLMLog"
 
     raw_content_for_error = "" # Store raw text for error reporting if needed
 
@@ -190,12 +198,12 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, 
         # Ensure qr_payloads are correctly set if LLM missed them or returned non-list
         if not isinstance(result.qr_payloads, list):
             result.qr_payloads = qr_payloads
-        
+
         response_log_data["parsed_result"] = result.model_dump()
         final_sender_name_for_log_path = result.sender # Get sender for log path
         returned_response_object = result
 
-    except Exception as e: 
+    except Exception as e:
         print(f"Error during LLM processing or Pydantic parsing for doc_id {doc_id}: {e}")
         error_log_details["exception_type"] = type(e).__name__
         error_log_details["exception_message"] = str(e)
@@ -208,20 +216,20 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, 
         error_subject_detail = str(e)
         if isinstance(e, ValidationError):
             error_subject_detail = f"{e.errors()[0]['msg'] if e.errors() else 'Unknown validation issue'}"
-        
+
         error_subject = f"LLM/Validation Error: {error_subject_detail}"
-        
+
         # Try to get raw content if available from the exception (e.g. if it's a custom error that wrapped it)
         # For now, we rely on raw_content_for_error or a generic message.
         # If the error is from client.beta.chat.completions.parse, the raw response might be harder to get
         # than with the older client.chat.completions.create.
         # The 'raw_content' variable from the old code isn't directly available here.
         # We'll use a placeholder if specific raw output isn't captured.
-        
+
         final_error_content = f"Failed to get valid structured response from LLM. Error: {str(e)}"
         if raw_content_for_error: # This would be set if it was a refusal
             final_error_content = f"LLM Refusal: {raw_content_for_error}"
-        
+
         print(f"Creating fallback error response for doc_id {doc_id} due to: {error_subject}")
         error_data = {
             "id": doc_id,
@@ -230,17 +238,17 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, 
             "subject": error_subject,
             "type": DocumentType.ERROR, # Use the Enum for error type
             "content": final_error_content,
-            "qr_payloads": qr_payloads, 
+            "qr_payloads": qr_payloads,
             "payment": None, # Simpler fallback for payment
             "is_multipage_explicit": False,
-            "is_information_complete": True, 
+            "is_information_complete": True,
             "belongs_to_open_doc_id": None
         }
         # Validate the error data itself to ensure it conforms to LetterLLMResponse
         fallback_response = LetterLLMResponse.model_validate(error_data)
         error_log_details["fallback_response_generated"] = fallback_response.model_dump()
         # Use sender from fallback for log path, which might be "Unknown"
-        final_sender_name_for_log_path = fallback_response.sender 
+        final_sender_name_for_log_path = fallback_response.sender
         returned_response_object = fallback_response
     finally:
         _log_llm_interaction(
@@ -251,14 +259,14 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, 
             error_log_details if error_log_details else None, # Pass None if empty
             final_sender_name_for_log_path
         )
-    
+
     if returned_response_object is None:
         # This case should ideally not be reached if logic is correct,
         # but as a safeguard, create a very generic error and log it.
         print(f"CRITICAL: returned_response_object is None for {doc_id} after try-except-finally. Defaulting to error.")
         critical_error_data = {
-            "id": doc_id, "sender": "System", "date_sent": "Unknown", 
-            "subject": "Critical internal error in LLM processing", 
+            "id": doc_id, "sender": "System", "date_sent": "Unknown",
+            "subject": "Critical internal error in LLM processing",
             "type": DocumentType.ERROR, "content": "Failed to produce a response object.",
             "qr_payloads": qr_payloads, "payment": None,
             "is_multipage_explicit": False, "is_information_complete": True,
@@ -268,7 +276,7 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, 
         # Log this critical failure specifically if the main logging in finally didn't capture it well
         # (though it should have run with some error details)
         _log_llm_interaction(
-            doc_id, settings, request_log_data, 
+            doc_id, settings, request_log_data,
             response_data={"critical_error_event": "returned_response_object was None"},
             error_details={"message": "Forced critical error response generation"},
             final_sender_name_for_path="System_CriticalError"
