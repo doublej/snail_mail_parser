@@ -5,8 +5,10 @@ from queue import Queue
 import shutil # Added for rmtree in merge operation
 from pathlib import Path # Added for merge operation
 from typing import List, Dict, Any # For type hints
+from PIL import Image # Added for handling image files consistently
+import pytesseract # Added for direct OCR on PIL Image
 
-from ocr import ocr_image, ocr_pdf
+from ocr import ocr_image, ocr_pdf # ocr_pdf now returns List[Image.Image]
 from qr import scan_qr
 from llm import classify_document, LetterLLMResponse, DocumentType # Added DocumentType for Enum check
 from output import save_output
@@ -53,20 +55,66 @@ class Processor:
             text_all = ""
             qr_payloads = []
             
+            # This list will hold PIL.Image.Image objects to be processed
+            images_to_process_pil: List[Image.Image] = []
+
             if current_page_path.suffix.lower() == '.pdf':
-                print(f"Processor: Processing PDF page: {current_page_path} (OCR and QR)")
-                text, _, pdf_qr_payloads = ocr_pdf(current_page_path)
-                text_all += text + "\n"
-                if pdf_qr_payloads:
-                    qr_payloads.extend(pdf_qr_payloads)
-            else: # Image
-                print(f"Processor: OCRing image page: {current_page_path}")
-                text, _ = ocr_image(current_page_path)
-                text_all += text + "\n"
-                print(f"Processor: Scanning QR codes for image page: {current_page_path}")
-                qr_payloads.extend(scan_qr(current_page_path))
+                print(f"Processor: Converting PDF {current_page_path} to images...")
+                # ocr_pdf now returns a list of PIL.Image objects
+                images_from_pdf_doc = ocr_pdf(current_page_path)
+                if images_from_pdf_doc:
+                    images_to_process_pil.extend(images_from_pdf_doc)
+                else:
+                    print(f"Processor: No images extracted from PDF {current_page_path}. Skipping.")
+                    return
+            else: # Original file is an image
+                print(f"Processor: Loading image file {current_page_path}")
+                try:
+                    # Open the image file and add it to the list for consistent processing
+                    img = Image.open(current_page_path)
+                    images_to_process_pil.append(img)
+                except Exception as e:
+                    print(f"Error opening image file {current_page_path}: {e}")
+                    return # Skip if image can't be opened
+
+            if not images_to_process_pil:
+                print(f"Processor: No images to process for {current_page_path}. Skipping.")
+                return
+
+            # Process each PIL image (whether from PDF or an original image file)
+            for i, pil_image_page in enumerate(images_to_process_pil):
+                page_description = f"page {i+1} of {current_page_path.name}" if len(images_to_process_pil) > 1 else current_page_path.name
+                
+                # Perform OCR on the PIL image
+                print(f"Processor: OCRing {page_description}")
+                try:
+                    # Ensure image is in a mode suitable for Tesseract if not already handled by converter/opener
+                    if pil_image_page.mode == 'P' or pil_image_page.mode == 'RGBA':
+                        pil_image_page = pil_image_page.convert('RGB')
+                    elif pil_image_page.mode == 'LA':
+                         pil_image_page = pil_image_page.convert('L')
+
+
+                    page_text = pytesseract.image_to_string(pil_image_page)
+                    text_all += page_text + "\n" 
+                except Exception as e:
+                    print(f"Error during OCR for {page_description}: {e}")
+
+                # Perform QR scan on the PIL image
+                print(f"Processor: Scanning QR codes for {page_description}")
+                try:
+                    page_qr_payloads = scan_qr(pil_image_page) # scan_qr accepts PIL.Image
+                    if page_qr_payloads:
+                        # Ensure QR payloads are unique if that's a requirement, though extend is fine.
+                        for payload in page_qr_payloads:
+                            if payload not in qr_payloads:
+                                qr_payloads.append(payload)
+                except Exception as e:
+                    print(f"Error during QR scan for {page_description}: {e}")
             
-            if not text_all.strip() and not qr_payloads:
+            text_all = text_all.strip() # Remove leading/trailing whitespace from aggregated text
+
+            if not text_all and not qr_payloads:
                 print(f"Processor: No text or QR codes found for page {current_page_path}. Skipping.")
                 return
 

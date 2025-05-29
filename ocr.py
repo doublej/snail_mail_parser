@@ -22,42 +22,22 @@ def ocr_image(path: Path) -> Tuple[str, float]:
 
 def ocr_pdf(path: Path) -> Tuple[str, float, List[str]]:
     """
-    Convert PDF to images, perform OCR and QR scan on each page.
-    Returns combined text, mean confidence, and list of QR payloads.
+    Convert PDF to a list of PIL Image objects, one for each page.
+    Does NOT perform OCR or QR scanning itself.
+    Returns a list of PIL.Image objects.
     """
-    text_all = ""
-    all_confs = []
-    all_qr_payloads: List[str] = []
-    
-    doc = fitz.open(path)
-    for page_num in range(len(doc)):
-        page = doc.load_page(page_num)
-        pix = page.get_pixmap() 
-        img_bytes = pix.tobytes("png")
-        
-        page_image = Image.open(io.BytesIO(img_bytes))
-
-        #show preview
-        page_image.show()
-
-        # wait for user input
-        input("Press Enter to continue...")
-
-        text = pytesseract.image_to_string(page_image)
-        data = pytesseract.image_to_data(page_image, output_type=pytesseract.Output.DICT)
-        confs = [int(c) for c in data.get('conf', []) if c != '-1']
-        if confs:
-            all_confs.extend(confs)
-        text_all += text + "\n"
-
-        # Scan QR codes from the page image
-        try:
-            page_qr_payloads = scan_qr(page_image)
-            if page_qr_payloads:
-                all_qr_payloads.extend(page_qr_payloads)
-        except Exception as e_qr:
-            print(f"Error scanning QR codes from PDF page image: {e_qr}")
-    
-    doc.close()
-    mean_conf = sum(all_confs) / len(all_confs) if all_confs else 0.0
-    return text_all, mean_conf, all_qr_payloads
+    images_from_pdf: List[Image.Image] = []
+    try:
+        doc = fitz.open(path)
+        for page_num in range(len(doc)):
+            page = doc.load_page(page_num)
+            pix = page.get_pixmap(alpha=False) # Render without alpha for consistency
+            img_bytes = pix.tobytes("png") # Convert to PNG bytes
+            # It's good practice to ensure the image mode is suitable for pytesseract, e.g. 'L' or 'RGB'
+            pil_image = Image.open(io.BytesIO(img_bytes)).convert('RGB')
+            images_from_pdf.append(pil_image)
+        doc.close()
+        # Debug page show and input were here, now removed as per plan.
+    except Exception as e:
+        print(f"Error converting PDF {path} page to image: {e}")
+    return images_from_pdf
