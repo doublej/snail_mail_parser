@@ -58,10 +58,16 @@ def save_output(letter: LetterLLMResponse, original_items: List[Union[Path, Imag
                     else:
                         print(f"Warning: Original scan file not found: {item}")
                 elif isinstance(item, Image.Image):
-                    # Save PIL Image, e.g., as PNG. Generate a unique name.
+                    # Save PIL Image as JPEG. Generate a unique name.
                     # Using original document ID and page index for clarity.
-                    filename = f"{letter.id}_original_page_{idx + 1:02d}.png"
-                    item.save(originals_dir / filename, "PNG")
+                    filename = f"{letter.id}_original_page_{idx + 1:02d}.jpg" # Changed extension to .jpg
+                    
+                    # Convert to RGB if image has alpha channel or is palette-based, as JPEG doesn't support these well.
+                    image_to_save = item
+                    if image_to_save.mode == 'RGBA' or image_to_save.mode == 'P' or image_to_save.mode == 'LA':
+                        image_to_save = image_to_save.convert('RGB')
+                    
+                    image_to_save.save(originals_dir / filename, "JPEG", quality=90) # Changed format to JPEG, added quality
                 else:
                     print(f"Warning: Unknown type in original_items at index {idx}: {type(item)}")
             except Exception as e:
