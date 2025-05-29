@@ -54,178 +54,164 @@ class Processor:
         current_page_path = pages[0]
         print(f"Processor: Starting processing for page: {current_page_path.name}")
 
-        try:
-            text_all = ""
-            qr_payloads = []
-            
-            # This list will hold PIL.Image.Image objects to be processed
-            images_to_process_pil: List[Image.Image] = []
 
-            if current_page_path.suffix.lower() == '.pdf':
-                print(f"Processor: Converting PDF {current_page_path.name} to images...")
-                # ocr_pdf now returns a list of PIL.Image objects
-                images_from_pdf_doc = convert_pdf_to_pil(current_page_path)
-                if images_from_pdf_doc:
-                    images_to_process_pil.extend(images_from_pdf_doc)
-                else:
-                    print(f"Processor: No images extracted from PDF {current_page_path}. Skipping.")
-                    return
-            else:  # Original file is an image
-                print(f"Processor: Loading image file: {current_page_path.name}")
-                try:
-                    # Open the image file and add it to the list for consistent processing
-                    img = Image.open(current_page_path)
-                    images_to_process_pil.append(img)
-                except Exception as e:
-                    print(f"Error opening image file {current_page_path}: {e}")
-                    return  # Skip if image can't be opened
 
-            if not images_to_process_pil:
-                print(f"Processor: No images to process for {current_page_path.name}. Skipping.")
-                return
+        text_all = ""
+        qr_payloads = []
 
-            # Process each PIL image (whether from PDF or an original image file)
-            for i, pil_image_page in enumerate(images_to_process_pil):
-                page_description = f"page {i+1} of {current_page_path.name}" if len(images_to_process_pil) > 1 else current_page_path.name
-                
-                # Perform OCR on the PIL image
-                print(f"Processor: OCRing {page_description}")
-                try:
-                    # Ensure image is in a mode suitable for Tesseract if not already handled by converter/opener
-                    if pil_image_page.mode == 'P' or pil_image_page.mode == 'RGBA':
-                        pil_image_page = pil_image_page.convert('RGB')
+        # This list will hold PIL.Image.Image objects to be processed
+        images_to_process_pil: List[Image.Image] = []
 
-                    elif pil_image_page.mode == 'LA':
-                        pil_image_page = pil_image_page.convert('L')
-
-                    page_text = pytesseract.image_to_string(pil_image_page)
-
-                    text_all += page_text + "\n" 
-                except Exception as e:
-                    print(f"Error during OCR for {page_description}: {e}")
-
-                # Perform QR scan on the PIL image
-                print(f"Processor: Scanning QR codes for {page_description}")
-                try:
-                    page_qr_payloads = scan_qr(pil_image_page)  # scan_qr accepts PIL.Image
-                    if page_qr_payloads:
-                        # Ensure QR payloads are unique if that's a requirement, though extend is fine.
-                        for payload in page_qr_payloads:
-                            if payload not in qr_payloads:
-                                qr_payloads.append(payload)
-                except Exception as e:
-                    print(f"Error during QR scan for {page_description}: {e}")
-            
-            text_all = text_all.strip()  # Remove leading/trailing whitespace from aggregated text
-
-            if not text_all and not qr_payloads:
-                print(f"Processor: No text or QR codes found for page {current_page_path}. Skipping.")
-                return
-
-            # Generate a candidate ID for this new page.
-            # This ID will become the document's ID if it's a new document,
-            # or it might be superseded if this page belongs to an existing open document.
-            candidate_page_id = self.get_new_doc_id()
-            
-            open_docs_summary = self._prepare_open_documents_summary()
-            
-            print(f"Processor: Classifying page {candidate_page_id} with LLM. Open docs summary: {len(open_docs_summary)}")
-            llm_response = classify_document(
-                text_all, 
-                qr_payloads, 
-                candidate_page_id, # Pass the new page's candidate ID
-                self.settings, 
-                open_docs_summary
-            )
-
-            # Ensure the ID from LLM response is the one we manage, not one LLM might make up for the current page.
-            # The llm_response.id should be the candidate_page_id we sent.
-            # If belongs_to_open_doc_id is set, that takes precedence for document identity.
-            
-            final_doc_id_to_process = llm_response.id # This should be candidate_page_id
-
-            if llm_response.belongs_to_open_doc_id and llm_response.belongs_to_open_doc_id in self.open_documents:
-                existing_doc_id = llm_response.belongs_to_open_doc_id
-                print(f"Processor: Page {candidate_page_id} (LLM ID: {llm_response.id}) belongs to open document {existing_doc_id}.")
-                
-                open_doc_entry = self.open_documents[existing_doc_id]
-                existing_letter_data = open_doc_entry['letter_data']
-                
-                # Append current page's items (PIL images for PDF, or Path for image)
-                if 'items_to_save' not in open_doc_entry:
-                    open_doc_entry['items_to_save'] = []
-                
-                items_from_current_page: List[Union[Path, Image.Image]]
-                if current_page_path.suffix.lower() == '.pdf':
-                    items_from_current_page = images_to_process_pil # This is List[Image.Image]
-                else:
-                    items_from_current_page = [current_page_path] # This is List[Path]
-                
-                open_doc_entry['items_to_save'].extend(items_from_current_page)
-
-                # Append content (ensure newline separation)
-                existing_letter_data.content += f"\n\n--- Page Break (Original Page ID: {llm_response.id}) ---\n\n{llm_response.content}"
-                # Merge QR payloads (avoid duplicates)
-                for qr in llm_response.qr_payloads:
-                    if qr not in existing_letter_data.qr_payloads:
-                        existing_letter_data.qr_payloads.append(qr)
-                
-                # Update completeness based on the new page. If any page says it's not complete, the doc isn't.
-                # Or, if the new page says it IS complete, and previous also thought so, it remains complete.
-                # A more sophisticated logic might be needed if LLM gives conflicting "is_complete" for same doc.
-                # For now, if the new page says it's not complete, the whole document is marked not complete.
-                if not llm_response.is_information_complete:
-                    existing_letter_data.is_information_complete = False
-                # If the new page IS complete, but the existing doc was marked incomplete, it remains incomplete
-                # unless this page explicitly completes it (e.g. "page 2 of 2").
-                # The current Pydantic model doesn't capture "final page" explicitly, relies on is_information_complete.
-
-                # open_doc_entry['last_seen_timestamp'] = time.time() # Removed
-                
-                if existing_letter_data.is_information_complete:
-                    print(f"Processor: Document {existing_doc_id} now considered complete. Saving.")
-                    # Pass the accumulated items (PIL images or Paths) for this multi-page document
-                    items_to_save_list = open_doc_entry.get('items_to_save', [])
-                    save_output(existing_letter_data, items_to_save_list, self.settings)
-                    del self.open_documents[existing_doc_id]
-                    print(f"Successfully processed and closed multi-page document: {existing_doc_id}")
-                else:
-                    print(f"Processor: Document {existing_doc_id} updated, still awaiting more pages.")
-
-            elif not llm_response.is_information_complete or llm_response.is_multipage_explicit:
-                # This is a new multi-page document or the first page of one.
-                # The llm_response.id (which is candidate_page_id) becomes the ID for this new open document.
-                actual_doc_id = llm_response.id 
-                print(f"Processor: Page {actual_doc_id} is part of a new multi-page document. Keeping it open.")
-                self.open_documents[actual_doc_id] = {
-                    'letter_data': llm_response,
-                    'items_to_save': images_to_process_pil if current_page_path.suffix.lower() == '.pdf' else [current_page_path]
-                }
+        if current_page_path.suffix.lower() == '.pdf':
+            print(f"Processor: Converting PDF {current_page_path.name} to images...")
+            # ocr_pdf now returns a list of PIL.Image objects
+            images_from_pdf_doc = convert_pdf_to_pil(current_page_path)
+            if images_from_pdf_doc:
+                images_to_process_pil.extend(images_from_pdf_doc)
             else:
-                # This is a single, complete document.
-                actual_doc_id = llm_response.id
-                print(f"Processor: Page {actual_doc_id} is a complete single-page document. Saving.")
-                
-                items_for_saving_originals: List[Union[Path, Image.Image]]
-                if current_page_path.suffix.lower() == '.pdf':
-                    # For PDFs, images_to_process_pil contains the PIL images of its pages.
-                    items_for_saving_originals = images_to_process_pil
-                else:
-                    # For original image files, pass the original file path.
-                    items_for_saving_originals = [current_page_path]
-                
-                save_output(llm_response, items_for_saving_originals, self.settings)
-                print(f"Successfully processed single-page document: {actual_doc_id}")
+                print(f"Processor: No images extracted from PDF {current_page_path}. Skipping.")
+                return
+        else:  # Original file is an image
+            print(f"Processor: Loading image file: {current_page_path.name}")
+            try:
+                # Open the image file and add it to the list for consistent processing
+                img = Image.open(current_page_path)
+                images_to_process_pil.append(img)
+            except Exception as e:
+                print(f"Error opening image file {current_page_path}: {e}")
+                return  # Skip if image can't be opened
 
-        except Exception:
-            # Use candidate_page_id if available, otherwise a generic error name
-            doc_id_str = locals().get('candidate_page_id', f"error_page_{current_page_path.name}")
-            error_filename = f"{doc_id_str}_{datetime.now().strftime('%Y%m%d%H%M%S')}.error"
-            error_path = self.settings.output_dir / error_filename
-            print(f"Processor: Error processing page {current_page_path}. Saving error to {error_path}")
-            with open(error_path, 'w') as ef:
-                ef.write(f"Error processing page: {current_page_path}\n")
-                ef.write(traceback.format_exc())
+        if not images_to_process_pil:
+            print(f"Processor: No images to process for {current_page_path.name}. Skipping.")
+            return
+
+        # Process each PIL image (whether from PDF or an original image file)
+        for i, pil_image_page in enumerate(images_to_process_pil):
+            page_description = f"page {i+1} of {current_page_path.name}" if len(images_to_process_pil) > 1 else current_page_path.name
+
+            # Perform OCR on the PIL image
+            print(f"Processor: OCRing {page_description}")
+            page_text, mean_conf = ocr_image(pil_image_page)
+
+            try:
+
+                text_all += page_text + "\n"
+            except Exception as e:
+                print(f"Error during OCR for {page_description}: {e}")
+
+            # Perform QR scan on the PIL image
+            print(f"Processor: Scanning QR codes for {page_description}")
+            try:
+                page_qr_payloads = scan_qr(pil_image_page)  # scan_qr accepts PIL.Image
+                if page_qr_payloads:
+                    # Ensure QR payloads are unique if that's a requirement, though extend is fine.
+                    for payload in page_qr_payloads:
+                        if payload not in qr_payloads:
+                            qr_payloads.append(payload)
+            except Exception as e:
+                print(f"Error during QR scan for {page_description}: {e}")
+
+        text_all = text_all.strip()  # Remove leading/trailing whitespace from aggregated text
+
+        if not text_all and not qr_payloads:
+            print(f"Processor: No text or QR codes found for page {current_page_path}. Skipping.")
+            return
+
+        # Generate a candidate ID for this new page.
+        # This ID will become the document's ID if it's a new document,
+        # or it might be superseded if this page belongs to an existing open document.
+        candidate_page_id = self.get_new_doc_id()
+
+        open_docs_summary = self._prepare_open_documents_summary()
+
+        print(f"Processor: Classifying page {candidate_page_id} with LLM. Open docs summary: {len(open_docs_summary)}")
+        llm_response = classify_document(
+            text_all,
+            qr_payloads,
+            candidate_page_id, # Pass the new page's candidate ID
+            self.settings,
+            open_docs_summary
+        )
+
+        # Ensure the ID from LLM response is the one we manage, not one LLM might make up for the current page.
+        # The llm_response.id should be the candidate_page_id we sent.
+        # If belongs_to_open_doc_id is set, that takes precedence for document identity.
+
+        final_doc_id_to_process = llm_response.id # This should be candidate_page_id
+
+        if llm_response.belongs_to_open_doc_id and llm_response.belongs_to_open_doc_id in self.open_documents:
+            existing_doc_id = llm_response.belongs_to_open_doc_id
+            print(f"Processor: Page {candidate_page_id} (LLM ID: {llm_response.id}) belongs to open document {existing_doc_id}.")
+
+            open_doc_entry = self.open_documents[existing_doc_id]
+            existing_letter_data = open_doc_entry['letter_data']
+
+            # Append current page's items (PIL images for PDF, or Path for image)
+            if 'items_to_save' not in open_doc_entry:
+                open_doc_entry['items_to_save'] = []
+
+            items_from_current_page: List[Union[Path, Image.Image]]
+            if current_page_path.suffix.lower() == '.pdf':
+                items_from_current_page = images_to_process_pil # This is List[Image.Image]
+            else:
+                items_from_current_page = [current_page_path] # This is List[Path]
+
+            open_doc_entry['items_to_save'].extend(items_from_current_page)
+
+            # Append content (ensure newline separation)
+            existing_letter_data.content += f"\n\n--- Page Break (Original Page ID: {llm_response.id}) ---\n\n{llm_response.content}"
+            # Merge QR payloads (avoid duplicates)
+            for qr in llm_response.qr_payloads:
+                if qr not in existing_letter_data.qr_payloads:
+                    existing_letter_data.qr_payloads.append(qr)
+
+            # Update completeness based on the new page. If any page says it's not complete, the doc isn't.
+            # Or, if the new page says it IS complete, and previous also thought so, it remains complete.
+            # A more sophisticated logic might be needed if LLM gives conflicting "is_complete" for same doc.
+            # For now, if the new page says it's not complete, the whole document is marked not complete.
+            if not llm_response.is_information_complete:
+                existing_letter_data.is_information_complete = False
+            # If the new page IS complete, but the existing doc was marked incomplete, it remains incomplete
+            # unless this page explicitly completes it (e.g. "page 2 of 2").
+            # The current Pydantic model doesn't capture "final page" explicitly, relies on is_information_complete.
+
+            # open_doc_entry['last_seen_timestamp'] = time.time() # Removed
+
+            if existing_letter_data.is_information_complete:
+                print(f"Processor: Document {existing_doc_id} now considered complete. Saving.")
+                # Pass the accumulated items (PIL images or Paths) for this multi-page document
+                items_to_save_list = open_doc_entry.get('items_to_save', [])
+                save_output(existing_letter_data, items_to_save_list, self.settings)
+                del self.open_documents[existing_doc_id]
+                print(f"Successfully processed and closed multi-page document: {existing_doc_id}")
+            else:
+                print(f"Processor: Document {existing_doc_id} updated, still awaiting more pages.")
+
+        elif not llm_response.is_information_complete or llm_response.is_multipage_explicit:
+            # This is a new multi-page document or the first page of one.
+            # The llm_response.id (which is candidate_page_id) becomes the ID for this new open document.
+            actual_doc_id = llm_response.id
+            print(f"Processor: Page {actual_doc_id} is part of a new multi-page document. Keeping it open.")
+            self.open_documents[actual_doc_id] = {
+                'letter_data': llm_response,
+                'items_to_save': images_to_process_pil if current_page_path.suffix.lower() == '.pdf' else [current_page_path]
+            }
+        else:
+            # This is a single, complete document.
+            actual_doc_id = llm_response.id
+            print(f"Processor: Page {actual_doc_id} is a complete single-page document. Saving.")
+
+            items_for_saving_originals: List[Union[Path, Image.Image]]
+            if current_page_path.suffix.lower() == '.pdf':
+                # For PDFs, images_to_process_pil contains the PIL images of its pages.
+                items_for_saving_originals = images_to_process_pil
+            else:
+                # For original image files, pass the original file path.
+                items_for_saving_originals = [current_page_path]
+
+            save_output(llm_response, items_for_saving_originals, self.settings)
+            print(f"Successfully processed single-page document: {actual_doc_id}")
+
 
     # def check_open_document_timeouts(self): # Method entirely removed
 
