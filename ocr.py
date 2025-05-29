@@ -10,6 +10,8 @@ from matplotlib import pyplot as plt
 
 
 def display_image(title, image):
+
+
     # Get image dimensions (height, width)
     if len(image.shape) == 2:  # Grayscale
         img_height, img_width = image.shape
@@ -32,6 +34,7 @@ def display_image(title, image):
     plt.axis('off')
     plt.show()
 
+
 def preprocess_image_for_ocr(pil_image):
     """
     Preprocess a PIL image to enhance OCR accuracy.
@@ -44,35 +47,18 @@ def preprocess_image_for_ocr(pil_image):
     6. Deskew the image to correct any rotation.
     7. Convert back to PIL image.
     """
+    # 2. Convert to grayscale
+    # pil to cv2
 
-    # Load the image using PIL and convert to OpenCV format
+    gray = cv2.cvtColor(np.array(pil_image), cv2.COLOR_BGR2GRAY)
 
-    cv_image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
-    display_image('Original Image', cv_image)
+    # 3. Noise removal
+    gray = cv2.medianBlur(gray, 3)
 
-    # Step 1: Convert to Grayscale
-    gray = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)
-    display_image('Grayscale Image', gray)
+    # 4. Binarization
+    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    # # Step 2: Apply Median Filter to Reduce Noise
-    # median = cv2.medianBlur(gray, 3)
-    # display_image('Median Filtered Image', median)
-
-    # Step 3: Normalize the Image Intensity
-    normalized = cv2.normalize(gray, None, 0, 255, cv2.NORM_MINMAX)
-    display_image('Normalized Image', normalized)
-
-    # Step 4: Adaptive Thresholding
-    thresh = cv2.adaptiveThreshold(
-        normalized, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 45, 30
-    )
-
-    display_image('Adaptive Thresholding', thresh)
-
-    # Step 6: Convert Back to PIL Image (if needed)
-    final_image = Image.fromarray(thresh)
-
-    return final_image
+    return binary
 
 
 def ocr_image(image: Image.Image) -> Tuple[str, float]:
@@ -82,14 +68,14 @@ def ocr_image(image: Image.Image) -> Tuple[str, float]:
     """
 
     image = preprocess_image_for_ocr(image)
-    # preview
-    image.show()
-    # wait
-    input("Press Enter to continue...")
 
     text = pytesseract.image_to_string(image)
+
     # Get OCR data to compute confidence scores
     data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
+
     confs = [int(c) for c in data.get('conf', []) if c != '-1']
+
     mean_conf = sum(confs) / len(confs) if confs else 0.0
-    return text, mean_conf
+
+    return text, mean_conf, image
