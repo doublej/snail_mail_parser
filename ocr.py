@@ -1,9 +1,11 @@
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, List # Added List
 from PIL import Image
 import pytesseract
 import fitz  # PyMuPDF
 import io
+
+from qr import scan_qr # Import scan_qr
 
 def ocr_image(path: Path) -> Tuple[str, float]:
     """
@@ -18,13 +20,14 @@ def ocr_image(path: Path) -> Tuple[str, float]:
     mean_conf = sum(confs) / len(confs) if confs else 0.0
     return text, mean_conf
 
-def ocr_pdf(path: Path) -> Tuple[str, float]:
+def ocr_pdf(path: Path) -> Tuple[str, float, List[str]]:
     """
-    Convert PDF to images and perform OCR on each page.
-    Returns combined text and mean confidence across all pages.
+    Convert PDF to images, perform OCR and QR scan on each page.
+    Returns combined text, mean confidence, and list of QR payloads.
     """
     text_all = ""
     all_confs = []
+    all_qr_payloads: List[str] = []
     
     doc = fitz.open(path)
     for page_num in range(len(doc)):
@@ -46,7 +49,15 @@ def ocr_pdf(path: Path) -> Tuple[str, float]:
         if confs:
             all_confs.extend(confs)
         text_all += text + "\n"
+
+        # Scan QR codes from the page image
+        try:
+            page_qr_payloads = scan_qr(page_image)
+            if page_qr_payloads:
+                all_qr_payloads.extend(page_qr_payloads)
+        except Exception as e_qr:
+            print(f"Error scanning QR codes from PDF page image: {e_qr}")
     
     doc.close()
     mean_conf = sum(all_confs) / len(all_confs) if all_confs else 0.0
-    return text_all, mean_conf
+    return text_all, mean_conf, all_qr_payloads

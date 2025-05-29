@@ -54,10 +54,11 @@ class Processor:
             qr_payloads = []
             
             if current_page_path.suffix.lower() == '.pdf':
-                print(f"Processor: OCRing PDF page: {current_page_path}")
-                text, _ = ocr_pdf(current_page_path)
+                print(f"Processor: Processing PDF page: {current_page_path} (OCR and QR)")
+                text, _, pdf_qr_payloads = ocr_pdf(current_page_path)
                 text_all += text + "\n"
-                # QR scanning for PDFs could be added here if desired
+                if pdf_qr_payloads:
+                    qr_payloads.extend(pdf_qr_payloads)
             else: # Image
                 print(f"Processor: OCRing image page: {current_page_path}")
                 text, _ = ocr_image(current_page_path)
