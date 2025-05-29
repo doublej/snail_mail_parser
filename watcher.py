@@ -52,12 +52,13 @@ class FolderWatcher: # No longer inherits from FileSystemEventHandler
         if ext not in self.allowed_exts: # Should not happen if called from scan_for_new_files
             return
 
-        if ext == '.pdf':
-            print(f"Watcher: PDF detected: {path}. Attempting to enqueue.")
-            self._flush_pages([path]) # PDF is standalone - enqueue immediately
-            return
+        # REMOVED: Special handling for PDFs. PDFs will now go through the same session logic as images.
+        # if ext == '.pdf':
+        #     print(f"Watcher: PDF detected: {path}. Attempting to enqueue.")
+        #     self._flush_pages([path]) # PDF is standalone - enqueue immediately
+        #     return
 
-        # Handle image page for aggregation
+        # Handle image page (and now PDF pages too) for aggregation
         stem = path.stem
         m = self.pattern.match(stem)
         if m:
