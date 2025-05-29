@@ -34,6 +34,12 @@ def ocr_pdf(path: Path) -> Tuple[str, float]:
         
         page_image = Image.open(io.BytesIO(img_bytes))
 
+        #show preview
+        page_image.show()
+
+        # wait for user input
+        input("Press Enter to continue...")
+
         text = pytesseract.image_to_string(page_image)
         data = pytesseract.image_to_data(page_image, output_type=pytesseract.Output.DICT)
         confs = [int(c) for c in data.get('conf', []) if c != '-1']
