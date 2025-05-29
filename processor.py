@@ -1,14 +1,17 @@
+import io
 import traceback
 from datetime import datetime
 from queue import Queue
 # import time # No longer needed for last_seen_timestamp
 import shutil # Added for rmtree in merge operation
 from pathlib import Path # Added for merge operation
-from typing import List, Dict, Any # For type hints
+from typing import List, Dict, Any, Tuple  # For type hints
+
+import fitz
 from PIL import Image # Added for handling image files consistently
 import pytesseract # Added for direct OCR on PIL Image
 
-from ocr import ocr_image, ocr_pdf # ocr_pdf now returns List[Image.Image]
+from ocr import ocr_image  # ocr_pdf now returns List[Image.Image]
 from qr import scan_qr
 from llm import classify_document, LetterLLMResponse, DocumentType # Added DocumentType for Enum check
 from output import save_output
@@ -45,11 +48,11 @@ class Processor:
         Manages multi-page document assembly based on LLM feedback.
         """
         if not pages or not isinstance(pages, list) or len(pages) != 1:
-            print(f"Processor: Expected a single page path in a list, but got: {pages}. Skipping.")
+            print(f"Processor: Not implemented. Expected a single page path in a list, but got: {pages}. Skipping.")
             return
         
         current_page_path = pages[0]
-        print(f"Processor: Starting processing for page: {current_page_path}")
+        print(f"Processor: Starting processing for page: {current_page_path.name}")
 
         try:
             text_all = ""
@@ -59,26 +62,26 @@ class Processor:
             images_to_process_pil: List[Image.Image] = []
 
             if current_page_path.suffix.lower() == '.pdf':
-                print(f"Processor: Converting PDF {current_page_path} to images...")
+                print(f"Processor: Converting PDF {current_page_path.name} to images...")
                 # ocr_pdf now returns a list of PIL.Image objects
-                images_from_pdf_doc = ocr_pdf(current_page_path)
+                images_from_pdf_doc = convert_pdf_to_pil(current_page_path)
                 if images_from_pdf_doc:
                     images_to_process_pil.extend(images_from_pdf_doc)
                 else:
                     print(f"Processor: No images extracted from PDF {current_page_path}. Skipping.")
                     return
-            else: # Original file is an image
-                print(f"Processor: Loading image file {current_page_path}")
+            else:  # Original file is an image
+                print(f"Processor: Loading image file: {current_page_path.name}")
                 try:
                     # Open the image file and add it to the list for consistent processing
                     img = Image.open(current_page_path)
                     images_to_process_pil.append(img)
                 except Exception as e:
                     print(f"Error opening image file {current_page_path}: {e}")
-                    return # Skip if image can't be opened
+                    return  # Skip if image can't be opened
 
             if not images_to_process_pil:
-                print(f"Processor: No images to process for {current_page_path}. Skipping.")
+                print(f"Processor: No images to process for {current_page_path.name}. Skipping.")
                 return
 
             # Process each PIL image (whether from PDF or an original image file)
@@ -91,11 +94,12 @@ class Processor:
                     # Ensure image is in a mode suitable for Tesseract if not already handled by converter/opener
                     if pil_image_page.mode == 'P' or pil_image_page.mode == 'RGBA':
                         pil_image_page = pil_image_page.convert('RGB')
-                    elif pil_image_page.mode == 'LA':
-                         pil_image_page = pil_image_page.convert('L')
 
+                    elif pil_image_page.mode == 'LA':
+                        pil_image_page = pil_image_page.convert('L')
 
                     page_text = pytesseract.image_to_string(pil_image_page)
+
                     text_all += page_text + "\n" 
                 except Exception as e:
                     print(f"Error during OCR for {page_description}: {e}")
@@ -103,7 +107,7 @@ class Processor:
                 # Perform QR scan on the PIL image
                 print(f"Processor: Scanning QR codes for {page_description}")
                 try:
-                    page_qr_payloads = scan_qr(pil_image_page) # scan_qr accepts PIL.Image
+                    page_qr_payloads = scan_qr(pil_image_page)  # scan_qr accepts PIL.Image
                     if page_qr_payloads:
                         # Ensure QR payloads are unique if that's a requirement, though extend is fine.
                         for payload in page_qr_payloads:
@@ -112,7 +116,7 @@ class Processor:
                 except Exception as e:
                     print(f"Error during QR scan for {page_description}: {e}")
             
-            text_all = text_all.strip() # Remove leading/trailing whitespace from aggregated text
+            text_all = text_all.strip()  # Remove leading/trailing whitespace from aggregated text
 
             if not text_all and not qr_payloads:
                 print(f"Processor: No text or QR codes found for page {current_page_path}. Skipping.")
@@ -343,3 +347,31 @@ class Processor:
         return False
 
     # The run() method and _worker() method are removed as processing is now driven by main.py
+
+
+def convert_pdf_to_pil(path: Path) -> Tuple[str, float, List[str]]:
+    """
+    Convert PDF to a list of PIL Image objects, one for each page.
+    Does NOT perform OCR or QR scanning itself.
+    Returns a list of PIL.Image objects.
+    """
+    images_from_pdf: List[Image.Image] = []
+    try:
+        doc = fitz.open(path)
+        for page_num in range(len(doc)):
+            page = doc.load_page(page_num)
+            pix = page.get_pixmap(
+                alpha=False,
+                dpi=300
+            )  # Render without alpha for consistency
+
+            img_bytes = pix.tobytes("png")  # Convert to PNG bytes
+
+            # It's good practice to ensure the image mode is suitable for pytesseract, e.g. 'L' or 'RGB'
+            pil_image = Image.open(io.BytesIO(img_bytes)).convert('RGB')
+            images_from_pdf.append(pil_image)
+        doc.close()
+        # Debug page show and input were here, now removed as per plan.
+    except Exception as e:
+        print(f"Error converting PDF {path} page to image: {e}")
+    return images_from_pdf
